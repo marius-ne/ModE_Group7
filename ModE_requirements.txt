@@ -1,0 +1,8 @@
+notebook
+numpy
+pandas
+gurobipy
+july
+Pyomo
+tsam
+matplotlib

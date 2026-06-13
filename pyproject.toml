@@ -1,0 +1,25 @@
+[project]
+name = "mode"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "marius-ne",email = "m.e.neuhalfen@t-online.de"}
+]
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+dependencies = [
+    "notebook (>=7.5.5,<8.0.0)",
+    "numpy (>=1.24,<2.0)",
+    "pandas (>=2.2,<3.0)",
+    "gurobipy (>=13.0.1,<14.0.0)",
+    "july (>=0.1.3,<0.2.0)",
+    "pyomo (>=6.10.0,<7.0.0)",
+    "tsam (>=3.3.0,<4.0.0)",
+    "matplotlib (>=3.10.8,<4.0.0)",
+    "ipykernel (>=7.2.0,<8.0.0)",
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
