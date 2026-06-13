@@ -317,7 +317,7 @@ if __name__ == "__main__":
             **{f"Pout_CHP{i}": value(m.Pout_CHP[i, k]) for i in m.CHP},
         })
     dispatch = pd.DataFrame(rows)
-    dispatch.to_csv("dispatch_result_LP.csv", index=False)
+    dispatch.to_csv("Marius/results/dispatch_result_LP.csv", index=False)
     print("Dispatch written to dispatch_result_LP.csv")
 
     plot_dispatch_results(dispatch)
