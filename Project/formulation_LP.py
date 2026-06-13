@@ -26,7 +26,7 @@ PGRID_DOMAIN = NonNegativeReals       # import only (no export); use Reals to al
 
 # Uncertain cost parameters (PLACEHOLDERS -- replace with your sampled values)
 cG = 0.16     # gas cost  [currency / kWh]
-cel = 0.8      # grid electricity cost [currency / kWh]
+cel = 0.21      # grid electricity cost [currency / kWh]
 
 # ---------------------------------------------------------------------------
 # 1. Parameters (numeric values from the PDF parameter table)
@@ -183,59 +183,91 @@ def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_o
 
     k = dispatch["k"].to_numpy()
 
-    fig, axes = plt.subplots(3, 1, figsize=(14, 11), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(14, 13), sharex=True, constrained_layout=True)
 
-    # 1) Electrical supply mix
-    p_chp_total = dispatch["Pout_CHP1"] + dispatch["Pout_CHP2"]
-    axes[0].fill_between(k, 0, dispatch["Pgrid"], step="mid", alpha=0.45, color="#FDAE61", label="Grid import")
-    axes[0].plot(k, p_chp_total, color="#1B9E77", linewidth=2, label="CHP electric output")
-    axes[0].plot(k, dispatch["P_D"], color="#111111", linewidth=1.7, linestyle="--", label="Electric demand")
-    axes[0].set_title("Electrical Supply Mix")
-    axes[0].set_ylabel("Power [kW]")
-    axes[0].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
-    axes[0].legend(loc="upper right")
+    # 1) Unit commitment / utilization (continuous 0..1)
+    from matplotlib.colors import LinearSegmentedColormap
 
-    # 2) Heat supply mix
-    q_boiler_total = dispatch["Qout_B1"] + dispatch["Qout_B2"]
-    q_chp_total = dispatch["Qout_CHP1"] + dispatch["Qout_CHP2"]
-    q_tes_net = dispatch["Qout_TES"] - dispatch["Qin_TES"]
-    q_gas_total = dispatch["Qin_B1"] + dispatch["Qin_B2"] + dispatch["Qin_CHP1"] + dispatch["Qin_CHP2"]
+    Qin_max_B = Qout_nom_B / eta_nom_B
+    Qin_max_CHP = Qout_nom_CHP / eta_nom_CHP_th
 
-    axes[1].plot(k, q_boiler_total, color="#E31A1C", linewidth=1.8, label="Boiler heat output")
-    axes[1].plot(k, q_chp_total, color="#FF7F00", linewidth=1.8, label="CHP heat output")
-    axes[1].plot(k, q_tes_net, color="#2C7FB8", linewidth=1.8, label="TES net heat (discharge-charge)")
-    axes[1].plot(k, dispatch["Q_D"], color="#111111", linewidth=1.7, linestyle="--", label="Heat demand")
-    axes[1].set_title("Heat Supply and Gas Purchase")
-    axes[1].set_ylabel("Heat flow [kW]")
-    axes[1].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
+    on_matrix = np.vstack([
+        np.clip(dispatch["Qin_B1"].to_numpy() / Qin_max_B, 0.0, 1.0),
+        np.clip(dispatch["Qin_B2"].to_numpy() / Qin_max_B, 0.0, 1.0),
+        np.clip(dispatch["Qin_CHP1"].to_numpy() / Qin_max_CHP, 0.0, 1.0),
+        np.clip(dispatch["Qin_CHP2"].to_numpy() / Qin_max_CHP, 0.0, 1.0),
+    ])
+
+    cmap_uc = LinearSegmentedColormap.from_list("uc_cmap", ["#ffffe5", "#238443"])
+    im = axes[0].imshow(
+        on_matrix,
+        aspect="auto",
+        interpolation="nearest",
+        cmap=cmap_uc,
+        vmin=0,
+        vmax=1,
+        extent=[k[0] - 0.5, k[-1] + 0.5, -0.5, 3.5],
+        origin="lower",
+    )
+    axes[0].set_yticks([0, 1, 2, 3])
+    axes[0].set_yticklabels(["Boiler 1", "Boiler 2", "CHP 1", "CHP 2"])
+    axes[0].set_title("Unit Utilization (0..1)")
+    axes[0].set_ylabel("Units")
+
+    # Use one shared colorbar for all axes so panel widths stay aligned.
+    cbar = fig.colorbar(im, ax=axes, orientation="vertical", pad=0.01, fraction=0.02)
+    cbar.set_label("Utilization [0..1]")
+
+    # 2) TES state and flows (same order as MILP)
+    axes[1].bar(k, dispatch["Qout_TES"], width=0.9, label="TES discharge", color="#2C7FB8", alpha=0.9)
+    axes[1].bar(k, -dispatch["Qin_TES"], width=0.9, label="TES charge", color="#EF3B2C", alpha=0.7)
+    axes[1].axhline(0.0, color="black", linewidth=0.9)
+    axes[1].set_ylabel("TES power [kW]")
+    axes[1].set_title("TES Operation")
+    axes[1].grid(True, axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
 
     ax1_twin = axes[1].twinx()
-    ax1_twin.bar(k, q_gas_total, width=0.85, alpha=0.22, color="#33A02C", label="Gas purchased (fuel input)")
-    ax1_twin.set_ylabel("Gas purchased [kW_fuel]")
+    ax1_twin.plot(k, dispatch["E_TES"], color="#6A3D9A", linewidth=2.0, label="TES energy")
+    ax1_twin.set_ylabel("TES energy [kWh]")
 
     lines1, labels1 = axes[1].get_legend_handles_labels()
     lines2, labels2 = ax1_twin.get_legend_handles_labels()
     axes[1].legend(lines1 + lines2, labels1 + labels2, loc="upper right")
 
-    # 3) TES state and flows
-    axes[2].bar(k, dispatch["Qout_TES"], width=0.9, label="TES discharge", color="#2C7FB8", alpha=0.9)
-    axes[2].bar(k, -dispatch["Qin_TES"], width=0.9, label="TES charge", color="#EF3B2C", alpha=0.7)
-    axes[2].axhline(0.0, color="black", linewidth=0.9)
-    axes[2].set_ylabel("TES power [kW]")
-    axes[2].set_title("TES Operation")
-    axes[2].grid(True, axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
-
-    ax2_twin = axes[2].twinx()
-    ax2_twin.plot(k, dispatch["E_TES"], color="#6A3D9A", linewidth=2.0, label="TES energy")
-    ax2_twin.set_ylabel("TES energy [kWh]")
-
-    lines3, labels3 = axes[2].get_legend_handles_labels()
-    lines4, labels4 = ax2_twin.get_legend_handles_labels()
-    axes[2].legend(lines3 + lines4, labels3 + labels4, loc="upper right")
-
+    # 3) Electrical supply mix (same order as MILP)
+    p_chp_total = dispatch["Pout_CHP1"] + dispatch["Pout_CHP2"]
+    axes[2].fill_between(k, 0, dispatch["Pgrid"], step="mid", alpha=0.45, color="#FDAE61", label="Grid import")
+    axes[2].plot(k, p_chp_total, color="#1B9E77", linewidth=2, label="CHP electric output")
+    axes[2].plot(k, dispatch["P_D"], color="#111111", linewidth=1.7, linestyle="--", label="Electric demand")
+    axes[2].set_title("Electrical Supply Mix")
+    axes[2].set_ylabel("Power [kW]")
     axes[2].set_xlabel("Time step k [-]")
-    fig.suptitle(f"Operational Dispatch Overview (LP) — gas={cG:.3f}, el={cel:.3f}", fontsize=14, y=0.99)
-    fig.tight_layout()
+    axes[2].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
+    axes[2].legend(loc="upper right")
+
+    # 4) Heat supply mix and gas purchase (same order as MILP)
+    q_boiler_total = dispatch["Qout_B1"] + dispatch["Qout_B2"]
+    q_chp_total = dispatch["Qout_CHP1"] + dispatch["Qout_CHP2"]
+    q_tes_net = dispatch["Qout_TES"] - dispatch["Qin_TES"]
+    q_gas_total = dispatch["Qin_B1"] + dispatch["Qin_B2"] + dispatch["Qin_CHP1"] + dispatch["Qin_CHP2"]
+
+    axes[3].plot(k, q_boiler_total, color="#E31A1C", linewidth=1.8, label="Boiler heat output")
+    axes[3].plot(k, q_chp_total, color="#FF7F00", linewidth=1.8, label="CHP heat output")
+    axes[3].plot(k, q_tes_net, color="#2C7FB8", linewidth=1.8, label="TES net heat (discharge-charge)")
+    axes[3].plot(k, dispatch["Q_D"], color="#111111", linewidth=1.7, linestyle="--", label="Heat demand")
+    axes[3].set_title("Heat Supply and Gas Purchase")
+    axes[3].set_ylabel("Heat flow [kW]")
+    axes[3].set_xlabel("Time step k [-]")
+    axes[3].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
+
+    ax2_twin = axes[3].twinx()
+    ax2_twin.bar(k, q_gas_total, width=0.85, alpha=0.22, color="#33A02C", label="Gas purchased (fuel input)")
+    ax2_twin.set_ylabel("Gas purchased [kW_fuel]")
+
+    lines3, labels3 = axes[3].get_legend_handles_labels()
+    lines4, labels4 = ax2_twin.get_legend_handles_labels()
+    axes[3].legend(lines3 + lines4, labels3 + labels4, loc="upper right")
+    fig.suptitle(f"Operational Dispatch Overview (LP) — gas={cG:.3f}, el={cel:.3f}", fontsize=14)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
@@ -274,8 +306,8 @@ if __name__ == "__main__":
             **{f"Pout_CHP{i}": value(m.Pout_CHP[i, k]) for i in m.CHP},
         })
     dispatch = pd.DataFrame(rows)
-    dispatch.to_csv("dispatch_result_lp.csv", index=False)
-    print("Dispatch written to dispatch_result_lp.csv")
+    dispatch.to_csv("dispatch_result_LP.csv", index=False)
+    print("Dispatch written to dispatch_result_LP.csv")
 
-    plot_dispatch_results(dispatch, output_path="dispatch_overview_lp.png")
-    print("Dispatch visualization written to dispatch_overview_lp.png")
+    plot_dispatch_results(dispatch, output_path="dispatch_overview_LP.png")
+    print("Dispatch visualization written to dispatch_overview_LP.png")

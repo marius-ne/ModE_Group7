@@ -38,7 +38,7 @@ PGRID_DOMAIN = NonNegativeReals       # import only (no export); use Reals to al
 
 # Uncertain cost parameters (PLACEHOLDERS -- replace with your sampled values)
 cG = 0.16     # gas cost  [currency / kWh]
-cel = 0.2   # grid electricity cost [currency / kWh]
+cel = 0.21   # grid electricity cost [currency / kWh]
 
 # ---------------------------------------------------------------------------
 # 1. Parameters (numeric values from the PDF parameter table)
