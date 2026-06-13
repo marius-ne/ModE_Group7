@@ -230,7 +230,7 @@ def total_cost(m):
     return cG * sum(m.E_G[k] for k in m.K) + cel * sum(m.E_el[k] for k in m.K)
 
 
-def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_overview.png"):
+def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_overview_MILP.png"):
     """Create a compact dashboard of unit commitment and energy flows."""
     from matplotlib.patches import Patch
 
@@ -319,7 +319,7 @@ def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_o
     lines4, labels4 = ax3_twin.get_legend_handles_labels()
     axes[3].legend(lines3 + lines4, labels3 + labels4, loc="upper right")
 
-    fig.suptitle("Operational Dispatch Overview", fontsize=14, y=0.99)
+    fig.suptitle(f"Operational Dispatch Overview — gas={cG:.3f}, el={cel:.3f}", fontsize=14, y=0.99)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
@@ -332,7 +332,7 @@ if __name__ == "__main__":
     print(f"beta_B={beta_B:.5f}, beta_CHP_th={beta_CHP_th:.5f}, beta_CHP_el={beta_CHP_el:.5f}")
 
     solver = SolverFactory("gurobi")
-    solver.options["MIPGap"] = 1e-4
+    solver.options["MIPGap"] = 1e-3
     solver.options["TimeLimit"] = 300
     results = solver.solve(m, tee=True)
 
@@ -360,9 +360,9 @@ if __name__ == "__main__":
             **{f"Pout_CHP{i}": value(m.Pout_CHP[i, k]) for i in m.CHP},
         })
     dispatch = pd.DataFrame(rows)
-    dispatch.to_csv("dispatch_result.csv", index=False)
-    print("Dispatch written to dispatch_result.csv")
+    dispatch.to_csv("dispatch_result_MILP.csv", index=False)
+    print("Dispatch written to dispatch_result_MILP.csv")
 
-    plot_dispatch_results(dispatch, output_path="dispatch_overview.png")
-    print("Dispatch visualization written to dispatch_overview.png")
+    plot_dispatch_results(dispatch, output_path="dispatch_overview_MILP.png")
+    print("Dispatch visualization written to dispatch_overview_MILP.png")
 
