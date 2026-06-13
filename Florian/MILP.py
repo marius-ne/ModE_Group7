@@ -213,7 +213,7 @@ def run_mode_project_milp_exact(c_gas=0.16, c_el=0.21, demand_csv_path=None):
 # ==========================================
 # AUFRUF DES SKRIPTS
 # ==========================================
-csv_pfad = r"C:\Users\flori\OneDrive - Students RWTH Aachen University\Methods for model-based design of energy systems\energy_demands.csv"
+csv_pfad = "energy_demands.csv"
 model_milp_exact, results_milp_exact = run_mode_project_milp_exact(demand_csv_path=csv_pfad)
 
 # import matplotlib.pyplot as plt
@@ -283,5 +283,5 @@ for k in model.K:
         **{f"Pout_CHP{i}": pyo.value(model.P_CHP_out[i, k]) for i in model.CHP_set},
     })
 dispatch = pd.DataFrame(rows)
-dispatch.to_csv("dispatch_result_MILP.csv", index=False)
+dispatch.to_csv("Florian/dispatch_result_MILP.csv", index=False)
 print("Dispatch written to dispatch_result_MILP.csv")

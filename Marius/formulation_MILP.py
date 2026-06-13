@@ -34,7 +34,7 @@ from pyomo.environ import (
 # ---------------------------------------------------------------------------
 # 0. User-settable inputs
 # ---------------------------------------------------------------------------
-DEMAND_CSV = "Project/energy_demands.csv"     # columns: time [h], elec demand [kW], heat demand [kW]
+DEMAND_CSV = "energy_demands.csv"     # columns: time [h], elec demand [kW], heat demand [kW]
 PGRID_DOMAIN = NonNegativeReals       # import only (no export); use Reals to allow export
 
 # Uncertain cost parameters (PLACEHOLDERS -- replace with your sampled values)
