@@ -1,3 +1,6 @@
 .venv/
 desktop.ini
 Exercise/
+__pycache__/
+.ipynb_checkpoints/
+*.pyc

@@ -12,6 +12,7 @@ The result is a pure LP.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 from scipy.linalg import expm
 from pyomo.environ import (
     ConcreteModel, Set, RangeSet, Param, Var, Expression, Objective, Constraint,
@@ -178,8 +179,16 @@ def total_cost(m):
     return cG * sum(m.E_G[k] for k in m.K) + cel * sum(m.E_el[k] for k in m.K)
 
 
-def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_overview_lp.png"):
+def plot_dispatch_results(
+    dispatch: pd.DataFrame,
+    output_path: str = "Marius/visualization/dispatch_overview_lp.png",
+    gas_price: float | None = None,
+    el_price: float | None = None,
+):
     """Create a compact dashboard of the LP dispatch and energy flows."""
+
+    gas_value = cG if gas_price is None else gas_price
+    el_value = cel if el_price is None else el_price
 
     k = dispatch["k"].to_numpy()
 
@@ -215,7 +224,7 @@ def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_o
     axes[0].set_ylabel("Units")
 
     # Use one shared colorbar for all axes so panel widths stay aligned.
-    cbar = fig.colorbar(im, ax=axes, orientation="vertical", pad=0.01, fraction=0.02)
+    cbar = fig.colorbar(im, ax=axes[0], orientation="vertical", pad=0.02)
     cbar.set_label("Utilization [0..1]")
 
     # 2) TES state and flows (same order as MILP)
@@ -267,8 +276,10 @@ def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_o
     lines3, labels3 = axes[3].get_legend_handles_labels()
     lines4, labels4 = ax2_twin.get_legend_handles_labels()
     axes[3].legend(lines3 + lines4, labels3 + labels4, loc="upper right")
-    fig.suptitle(f"Operational Dispatch Overview (LP) — gas={cG:.3f}, el={cel:.3f}", fontsize=14)
-    fig.savefig(output_path, dpi=150)
+    fig.suptitle(f"Operational Dispatch Overview (LP) — gas={gas_value:.3f} €, el={el_value:.3f} €", fontsize=14)
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_file, dpi=150)
     plt.close(fig)
 
 
@@ -309,5 +320,5 @@ if __name__ == "__main__":
     dispatch.to_csv("dispatch_result_LP.csv", index=False)
     print("Dispatch written to dispatch_result_LP.csv")
 
-    plot_dispatch_results(dispatch, output_path="dispatch_overview_LP.png")
-    print("Dispatch visualization written to dispatch_overview_LP.png")
+    plot_dispatch_results(dispatch)
+    print("Dispatch visualization written to visualization/dispatch_overview_lp.png")

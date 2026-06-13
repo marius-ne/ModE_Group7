@@ -24,6 +24,7 @@ Conventions / modeling decisions (read these -- some affect the optimum):
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 from scipy.linalg import expm
 from pyomo.environ import (
     ConcreteModel, Set, RangeSet, Param, Var, Expression, Objective, Constraint,
@@ -230,9 +231,17 @@ def total_cost(m):
     return cG * sum(m.E_G[k] for k in m.K) + cel * sum(m.E_el[k] for k in m.K)
 
 
-def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_overview_MILP.png"):
+def plot_dispatch_results(
+    dispatch: pd.DataFrame,
+    output_path: str = "Marius/visualization/dispatch_overview_MILP.png",
+    gas_price: float | None = None,
+    el_price: float | None = None,
+):
     """Create a compact dashboard of unit commitment and energy flows."""
     from matplotlib.patches import Patch
+
+    gas_value = cG if gas_price is None else gas_price
+    el_value = cel if el_price is None else el_price
 
     k = dispatch["k"].to_numpy()
 
@@ -319,9 +328,11 @@ def plot_dispatch_results(dispatch: pd.DataFrame, output_path: str = "dispatch_o
     lines4, labels4 = ax3_twin.get_legend_handles_labels()
     axes[3].legend(lines3 + lines4, labels3 + labels4, loc="upper right")
 
-    fig.suptitle(f"Operational Dispatch Overview — gas={cG:.3f}, el={cel:.3f}", fontsize=14, y=0.99)
+    fig.suptitle(f"Operational Dispatch Overview — gas={gas_value:.3f} €, el={el_value:.3f} €", fontsize=14, y=0.99)
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
+    fig.savefig(output_file, dpi=150)
     plt.close(fig)
 
 # ---------------------------------------------------------------------------
@@ -363,6 +374,6 @@ if __name__ == "__main__":
     dispatch.to_csv("dispatch_result_MILP.csv", index=False)
     print("Dispatch written to dispatch_result_MILP.csv")
 
-    plot_dispatch_results(dispatch, output_path="dispatch_overview_MILP.png")
-    print("Dispatch visualization written to dispatch_overview_MILP.png")
+    plot_dispatch_results(dispatch)
+    print("Dispatch visualization written to visualization/dispatch_overview_MILP.png")
 
