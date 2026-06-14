@@ -1,4 +1,4 @@
-# src/optimization.py
+# src/optimization/optimization.py
 """
 Optimization module for minimzation of the OPEX of a multi-energy system (MES).
 """
@@ -92,18 +92,18 @@ def build_milp(
     m = pyo.ConcreteModel(name="MILP")
 
 
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # 3.1  SETS
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     m.K = pyo.Set(initialize=range(1, N + 1), doc="Time steps k = 1..N")
     m.K0 = pyo.Set(initialize=range(0, N + 1), doc="Extended set k = 0..N for TES state")
     m.B = pyo.Set(initialize=[1, 2], doc="Boiler units")
     m.C = pyo.Set(initialize=[1, 2], doc="CHP units")
 
 
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # 3.2  PARAMETERS
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     m.c_g = pyo.Param(initialize=c_g, doc="Gas price [€/kWh]")
     m.c_el = pyo.Param(initialize=c_el, doc="Electricity price [€/kWh]")
     m.dt = pyo.Param(initialize=DELTA_T, doc="Time step [h]")
@@ -142,47 +142,47 @@ def build_milp(
     m.beta_C_el = pyo.Param(initialize=beta_CHP_el)
 
 
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # 3.3  DECISION VARIABLES
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── TES ──
+    # -------------------------------------------------------------------------
+    # -- TES --
     m.E_TES = pyo.Var(m.K0, domain=pyo.NonNegativeReals, doc="TES energy content [kWh]")  # ETES,k (k=0..N)
     m.Q_in_TES = pyo.Var(m.K, domain=pyo.NonNegativeReals, doc="TES charging flux [kW]")
     m.Q_out_TES = pyo.Var(m.K, domain=pyo.NonNegativeReals, doc="TES discharging flux [kW]")
     m.delta_in_TES = pyo.Var(m.K, domain=pyo.Binary, doc="TES charging binary")
     m.delta_out_TES = pyo.Var(m.K, domain=pyo.Binary, doc="TES discharging binary")
 
-    # ── Boilers ──
+    # -- Boilers --
     m.Q_in_B = pyo.Var(m.B, m.K, domain=pyo.NonNegativeReals, doc="Boiler gas input [kW]")
     m.Q_out_B = pyo.Var(m.B, m.K, domain=pyo.NonNegativeReals, doc="Boiler heat output [kW]")
     m.delta_B = pyo.Var(m.B, m.K, domain=pyo.Binary, doc="Boiler on/off binary")
 
-    # ── CHPs ──
+    # -- CHPs --
     m.Q_in_CHP = pyo.Var(m.C, m.K, domain=pyo.NonNegativeReals, doc="CHP gas input [kW]")
     m.Q_out_CHP = pyo.Var(m.C, m.K, domain=pyo.NonNegativeReals, doc="CHP thermal output [kW]")
     m.P_out_CHP = pyo.Var(m.C, m.K, domain=pyo.NonNegativeReals, doc="CHP electrical output [kW]")
     m.delta_CHP = pyo.Var(m.C, m.K, domain=pyo.Binary, doc="CHP on/off binary")
 
-    # ── Grid ──
+    # -- Grid --
     m.P_grid = pyo.Var(m.K, domain=pyo.NonNegativeReals, doc="Grid electricity import [kW]")
 
-    # ── Auxiliary energy variables (for sparse objective) ──
+    # -- Auxiliary energy variables (for sparse objective) --
     m.E_gas = pyo.Var(m.K, domain=pyo.Reals, doc="Gas energy per step [kWh]")
     m.E_el = pyo.Var(m.K, domain=pyo.Reals, doc="Grid electricity per step [kWh]")
 
 
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # 3.4  OBJECTIVE
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     def obj_rule(m):
         return m.c_g * sum(m.E_gas[k] for k in m.K) + m.c_el * sum(m.E_el[k] for k in m.K)
     m.OBJ = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
 
 
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # 3.5  CONSTRAINTS
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── Auxiliary definitions ────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # -- Auxiliary definitions ------------------------------------------------
     # Gas energy consumed at time step k
     def e_gas_def(m, k):
         return m.E_gas[k] == m.dt * (
@@ -197,7 +197,7 @@ def build_milp(
 
     m.c_E_el = pyo.Constraint(m.K, rule=e_el_def)
 
-    # ── TES constraints ──────────────────────────────────────────────────────
+    # -- TES constraints ------------------------------------------------------
     # (I) Exact discrete-time dynamics (matrix-exponential discretization)
     def tes_dynamics(m, k):
         return m.E_TES[k] == (m.a_TES * m.E_TES[k - 1]
@@ -245,7 +245,7 @@ def build_milp(
         return m.delta_in_TES[k] + m.delta_out_TES[k] <= 1
     m.c_TES_mutex = pyo.Constraint(m.K, rule=tes_mutex)
 
-    # ── Boiler constraints ───────────────────────────────────────────────────
+    # -- Boiler constraints ---------------------------------------------------
     # (I) Part-load efficiency curve:
     def boiler_pl(m, i, k):
         return (m.Q_out_B[i, k] == m.Q_out_nom_B *
@@ -265,7 +265,7 @@ def build_milp(
         return m.Q_in_B[i, k] >= m.delta_B[i, k] * m.lam_in_min_B * (m.Q_out_nom_B / m.eta_nom_B)
     m.c_B_in_lb = pyo.Constraint(m.B, m.K, rule=boiler_in_lb)
 
-    # ── CHP constraints ──────────────────────────────────────────────────────
+    # -- CHP constraints ------------------------------------------------------
     # (I) Thermal part-load curve
     def chp_th_pl(m, i, k):
         return (m.Q_out_CHP[i, k] == m.Q_out_nom_C *
@@ -294,7 +294,7 @@ def build_milp(
         return m.Q_in_CHP[i, k] >= m.delta_CHP[i, k] * m.lam_in_min_C * (m.P_out_nom_C / m.eta_nom_C_el)
     m.c_CHP_in_lb = pyo.Constraint(m.C, m.K, rule=chp_in_lb)
 
-    # ── Demand satisfaction ──────────────────────────────────────────────────
+    # -- Demand satisfaction --------------------------------------------------
     # (I) Heat demand balance:
     def heat_balance(m, k):
         tes_net = m.Q_out_TES[k] - m.Q_in_TES[k]
