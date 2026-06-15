@@ -212,6 +212,17 @@ for idx, row in prices_df.iterrows():
     print(f"Szenario {idx+1}/{len(prices_df)} Ergebnis: OPEX = {opex:.2f} €, gas={gas_mwh} €/MWh, el={el_mwh} €/MWh")
 
 df_res = pd.DataFrame(results_list)
+# --- Terminal table output: show OPEX for all scenarios in a nice table ---
+try:
+    disp = df_res.copy()
+    # add scenario index (1-based) and format OPEX
+    disp.insert(0, 'scenario', range(1, len(disp) + 1))
+    disp['opex'] = disp['opex'].map(lambda x: f"{x:,.2f} €")
+    disp = disp[['scenario', 'gas_price_MWh', 'electricity_price_MWh', 'opex']]
+    print('\nOPEX per scenario:')
+    print(disp.to_string(index=False))
+except Exception as e:
+    print(f"Fehler beim Erstellen der Ergebnis-Tabelle: {e}")
 import matplotlib.pyplot as plt
 plt.figure(figsize=(8, 6))
 # Scatter plot: one point per scenario, colored by OPEX
