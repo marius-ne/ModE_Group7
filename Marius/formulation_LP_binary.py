@@ -27,7 +27,7 @@ DEMAND_CSV = "energy_demands.csv"
 PGRID_DOMAIN = NonNegativeReals       # import only; use Reals to allow export
 
 cG = 0.16     # gas cost  [currency / kWh]
-cel = 0.21    # grid electricity cost [currency / kWh]
+cel = 0.1    # grid electricity cost [currency / kWh]
 
 # ---------------------------------------------------------------------------
 # 1. Parameters
@@ -238,9 +238,17 @@ def plot_dispatch_results(
     output_path: str = "Marius/visualization/dispatch_overview_LP_binary.png",
     gas_price: float | None = None,
     el_price: float | None = None,
+    opex: float | None = None,
+    fontsize: int = 10,
 ):
     """Dashboard showing continuous delta (commitment) values between 0 and 1."""
     from matplotlib.colors import LinearSegmentedColormap
+
+    fs_tick     = fontsize
+    fs_label    = fontsize
+    fs_title    = round(fontsize * 1.1)
+    fs_legend   = max(fontsize - 1, 7)
+    fs_suptitle = round(fontsize * 1.4)
 
     gas_value = cG if gas_price is None else gas_price
     el_value = cel if el_price is None else el_price
@@ -270,37 +278,42 @@ def plot_dispatch_results(
         origin="lower",
     )
     axes[0].set_yticks([0, 1, 2, 3])
-    axes[0].set_yticklabels(["Boiler 1", "Boiler 2", "CHP 1", "CHP 2"])
-    axes[0].set_title("Unit Commitment δ (LP relaxation, continuous [0–1])")
-    axes[0].set_ylabel("Units")
+    axes[0].set_yticklabels(["Boiler 1", "Boiler 2", "CHP 1", "CHP 2"], fontsize=fs_tick)
+    axes[0].tick_params(labelsize=fs_tick)
+    axes[0].set_title("Unit Commitment δ (LP relaxation, continuous [0–1])", fontsize=fs_title)
+    axes[0].set_ylabel("Units", fontsize=fs_label)
     cbar = fig.colorbar(im, ax=axes[0], orientation="vertical", pad=0.02)
-    cbar.set_label("δ value [0–1]")
+    cbar.set_label("δ value [0–1]", fontsize=fs_label)
+    cbar.ax.tick_params(labelsize=fs_tick)
 
     # 2) TES charging/discharging and state of charge
     axes[1].bar(k, dispatch["Qout_TES"], width=0.9, label="TES discharge", color="#2C7FB8", alpha=0.9)
     axes[1].bar(k, -dispatch["Qin_TES"], width=0.9, label="TES charge", color="#EF3B2C", alpha=0.7)
     axes[1].axhline(0.0, color="black", linewidth=0.9)
-    axes[1].set_ylabel("TES power [kW]")
-    axes[1].set_title("TES Operation")
+    axes[1].set_ylabel("TES power [kW]", fontsize=fs_label)
+    axes[1].set_title("TES Operation", fontsize=fs_title)
+    axes[1].tick_params(labelsize=fs_tick)
     axes[1].grid(True, axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
 
     ax1_twin = axes[1].twinx()
     ax1_twin.plot(k, dispatch["E_TES"], color="#6A3D9A", linewidth=2.0, label="TES energy")
-    ax1_twin.set_ylabel("TES energy [kWh]")
+    ax1_twin.set_ylabel("TES energy [kWh]", fontsize=fs_label)
+    ax1_twin.tick_params(labelsize=fs_tick)
 
     lines1, labels1 = axes[1].get_legend_handles_labels()
     lines2, labels2 = ax1_twin.get_legend_handles_labels()
-    axes[1].legend(lines1 + lines2, labels1 + labels2, loc="upper right")
+    axes[1].legend(lines1 + lines2, labels1 + labels2, loc="upper right", fontsize=fs_legend)
 
     # 3) Electrical supply mix
     p_chp_total = dispatch["Pout_CHP1"] + dispatch["Pout_CHP2"]
     axes[2].fill_between(k, 0, dispatch["Pgrid"], step="mid", alpha=0.45, color="#FDAE61", label="Grid import")
     axes[2].plot(k, p_chp_total, color="#1B9E77", linewidth=2, label="CHP electric output")
     axes[2].plot(k, dispatch["P_D"], color="#111111", linewidth=1.7, linestyle="--", label="Electric demand")
-    axes[2].set_title("Electrical Supply Mix")
-    axes[2].set_ylabel("Power [kW]")
+    axes[2].set_title("Electrical Supply Mix", fontsize=fs_title)
+    axes[2].set_ylabel("Power [kW]", fontsize=fs_label)
+    axes[2].tick_params(labelsize=fs_tick)
     axes[2].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
-    axes[2].legend(loc="upper right")
+    axes[2].legend(loc="upper right", fontsize=fs_legend)
 
     # 4) Heat supply mix and gas purchase
     q_boiler_total = dispatch["Qout_B1"] + dispatch["Qout_B2"]
@@ -312,23 +325,25 @@ def plot_dispatch_results(
     axes[3].plot(k, q_chp_total, color="#FF7F00", linewidth=1.8, label="CHP heat output")
     axes[3].plot(k, q_tes_net, color="#2C7FB8", linewidth=1.8, label="TES net heat (discharge-charge)")
     axes[3].plot(k, dispatch["Q_D"], color="#111111", linewidth=1.7, linestyle="--", label="Heat demand")
-    axes[3].set_title("Heat Supply and Gas Purchase")
-    axes[3].set_ylabel("Heat flow [kW]")
-    axes[3].set_xlabel("Time step k [-]")
+    axes[3].set_title("Heat Supply and Gas Purchase", fontsize=fs_title)
+    axes[3].set_ylabel("Heat flow [kW]", fontsize=fs_label)
+    axes[3].set_xlabel("Time step k [-]", fontsize=fs_label)
+    axes[3].tick_params(labelsize=fs_tick)
     axes[3].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
 
     ax3_twin = axes[3].twinx()
     ax3_twin.bar(k, q_gas_total, width=0.85, alpha=0.22, color="#33A02C", label="Gas purchased (fuel input)")
-    ax3_twin.set_ylabel("Gas purchased [kW_fuel]")
+    ax3_twin.set_ylabel("Gas purchased [kW_fuel]", fontsize=fs_label)
+    ax3_twin.tick_params(labelsize=fs_tick)
 
     lines3, labels3 = axes[3].get_legend_handles_labels()
     lines4, labels4 = ax3_twin.get_legend_handles_labels()
-    axes[3].legend(lines3 + lines4, labels3 + labels4, loc="upper right")
+    axes[3].legend(lines3 + lines4, labels3 + labels4, loc="upper right", fontsize=fs_legend)
 
-    fig.suptitle(
-        f"Operational Dispatch Overview (LP binary relaxation) — gas={gas_value:.3f} €, el={el_value:.3f} €",
-        fontsize=14,
-    )
+    _title = f"Operational Dispatch Overview (LP binary relaxation) — gas={gas_value:.3f} €/kWh, el={el_value:.3f} €/kWh"
+    if opex is not None:
+        _title += f"\nTotal OPEX: {opex:,.2f} €"
+    fig.suptitle(_title, fontsize=fs_suptitle)
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_file, dpi=150)
@@ -376,5 +391,5 @@ if __name__ == "__main__":
     dispatch.to_csv("Marius/results/dispatch_result_LP_binary.csv", index=False)
     print("Dispatch written to Marius/results/dispatch_result_LP_binary.csv")
 
-    plot_dispatch_results(dispatch)
+    plot_dispatch_results(dispatch, opex=value(m.total_cost), fontsize=18)
     print("Dispatch visualization written to Marius/visualization/dispatch_overview_LP_binary.png")
