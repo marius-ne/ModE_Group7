@@ -190,64 +190,36 @@ def run_mode_project_LP(c_gas=0.16, c_el=0.21, demand_csv_path=None):
     return m, results
 
 # ==========================================
-# AUFRUF DES SKRIPTS
+# AUFRUF DES SKRIPTS: Szenarien durchlaufen und OPEX auswerten
 # ==========================================
-csv_pfad = "energy_demands.csv"
-model_milp_exact, results_milp_exact = run_mode_project_LP(demand_csv_path=csv_pfad)
 
+price_csv_path = "Erdem/training_samples_sobol.csv"
+demand_csv_path = "Erdem/energy_demands.csv"
+
+prices_df = pd.read_csv(price_csv_path)
+results_list = []
+print(f"Lade Preis-Szenarien aus {price_csv_path}, insgesamt {len(prices_df)} Szenarien.")
+for idx, row in prices_df.iterrows():
+    gas_mwh = float(row['gas_price'])
+    el_mwh = float(row['electricity_price'])
+    # Preise in CSV sind in €/MWh, demands in kWh -> Umrechnung in €/kWh
+    gas_kwh = gas_mwh / 1000.0
+    el_kwh = el_mwh / 1000.0
+    print(f"Szenario {idx+1}/{len(prices_df)}: gas={gas_mwh} €/MWh, el={el_mwh} €/MWh -> gas={gas_kwh} €/kWh, el={el_kwh} €/kWh")
+    model_s, results_s = run_mode_project_LP(c_gas=gas_kwh, c_el=el_kwh, demand_csv_path=demand_csv_path)
+    opex = float(pyo.value(model_s.obj))
+    results_list.append({'gas_price_MWh': gas_mwh, 'electricity_price_MWh': el_mwh, 'opex': opex})
+    print(f"Szenario {idx+1}/{len(prices_df)} Ergebnis: OPEX = {opex:.2f} €, gas={gas_mwh} €/MWh, el={el_mwh} €/MWh")
+
+df_res = pd.DataFrame(results_list)
 import matplotlib.pyplot as plt
-
-# after solve:
-model = model_milp_exact
-
-data = []
-for k in model.K:
-    e_tes = pyo.value(model.E_TES[k])
-    q_chp_1= pyo.value(model.Q_CHP_out[1, k])
-    q_chp_2 = pyo.value(model.Q_CHP_out[2, k])
-    q_b_1 = pyo.value(model.Q_B_out[1, k])
-    q_b_2 = pyo.value(model.Q_B_out[2, k])
-    q_t_in = pyo.value(model.Q_TES_in[k])
-    q_t_out = pyo.value(model.Q_TES_out[k])
-    q_chp = q_chp_1 + q_chp_2
-    q_b = q_b_1 + q_b_2
-    e_grid = pyo.value(model.P_grid[k])
-    data.append({'k': k, 'energy': e_tes, 'q_chp': q_chp, 'q_b': q_b, 'e_grid': e_grid, 'q_t_in': q_t_in, 'q_t_out': q_t_out})
-
-x = [row['k'] for row in data]
-
-y_1 = [row['energy'] for row in data]
-
-
-y_2 = [row['q_chp'] for row in data]
-
-y_3 = [row['q_b'] for row in data]
-
-
-y_4 = [row['e_grid'] for row in data]
-
-y_5 = [row['q_t_in'] for row in data]
-
-y_6 = [row['q_t_out'] for row in data]
-
-fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-
-axs[0].plot(x, y_1, label='E_TES', color='tab:blue')
-axs[0].set_title('TES Energy Content')
-axs[0].set_ylabel('E_TES')
-axs[0].legend()
-axs[0].grid(True)
-
-axs[1].plot(x, y_2, label='Q_CHP_out', color='tab:orange')
-axs[1].plot(x, y_3, label='Q_B_out', color='tab:green')
-axs[1].plot(x, y_4, label='P_grid', color='tab:red')
-axs[1].plot(x, y_5, label='Q_TES_in', color='tab:purple')
-axs[1].plot(x, y_6, label='Q_TES_out', color='tab:brown')
-axs[1].set_title('Plant Outputs')
-axs[1].set_xlabel('Time step k')
-axs[1].set_ylabel('Power / Heat')
-axs[1].legend()
-axs[1].grid(True)
-
+plt.figure(figsize=(8, 6))
+# Scatter plot: one point per scenario, colored by OPEX
+sc = plt.scatter(df_res['electricity_price_MWh'], df_res['gas_price_MWh'], c=df_res['opex'], cmap='viridis', s=80, edgecolors='k')
+plt.xlabel('Electricity price (€/MWh)')
+plt.ylabel('Gas price (€/MWh)')
+plt.title('OPEX scatter (each point = scenario)')
+cbar = plt.colorbar(sc)
+cbar.set_label('OPEX (€)')
 plt.tight_layout()
 plt.show()
