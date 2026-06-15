@@ -2,7 +2,7 @@ import pyomo.environ as pyo
 import pandas as pd
 import numpy as np
 
-def run_mode_project_LP(c_gas=0.16, c_el=0.21, demand_csv_path=None):
+def run_mode_project_LP():
     """
     Erstellt und löst das MILP-Modell basierend auf der exakten Diskretisierung 
     (Zustandsraummodell) des Speichers. Demand ist wieder streng durch == gekoppelt.
@@ -177,7 +177,7 @@ def run_mode_project_LP(c_gas=0.16, c_el=0.21, demand_csv_path=None):
 
     # --- 8. Lösen ---
     solver = pyo.SolverFactory('gurobi')
-    solver.options['MIPGap'] = 0.01 
+    solver.options['MIPGap'] = 0.001  # 0.1% optimality gap
     
     print("Starte MILP Optimierung (Exakte Diskretisierung)...")
     results = solver.solve(m, tee=True) 
@@ -197,7 +197,7 @@ price_csv_path = "Erdem/training_samples_sobol.csv"
 demand_csv_path = "Erdem/energy_demands.csv"
 
 prices_df = pd.read_csv(price_csv_path)
-results_list = []
+scenario_results = []
 print(f"Lade Preis-Szenarien aus {price_csv_path}, insgesamt {len(prices_df)} Szenarien.")
 for idx, row in prices_df.iterrows():
     gas_mwh = float(row['gas_price'])
@@ -205,32 +205,15 @@ for idx, row in prices_df.iterrows():
     # Preise in CSV sind in €/MWh, demands in kWh -> Umrechnung in €/kWh
     gas_kwh = gas_mwh / 1000.0
     el_kwh = el_mwh / 1000.0
-    print(f"Szenario {idx+1}/{len(prices_df)}: gas={gas_mwh} €/MWh, el={el_mwh} €/MWh -> gas={gas_kwh} €/kWh, el={el_kwh} €/kWh")
     model_s, results_s = run_mode_project_LP(c_gas=gas_kwh, c_el=el_kwh, demand_csv_path=demand_csv_path)
     opex = float(pyo.value(model_s.obj))
-    results_list.append({'gas_price_MWh': gas_mwh, 'electricity_price_MWh': el_mwh, 'opex': opex})
-    print(f"Szenario {idx+1}/{len(prices_df)} Ergebnis: OPEX = {opex:.2f} €, gas={gas_mwh} €/MWh, el={el_mwh} €/MWh")
+    scenario_results.append({'gas_price_MWh': gas_mwh, 'electricity_price_MWh': el_mwh, 'opex': f"{opex:.2f}"})
+    
+df_res = pd.DataFrame(scenario_results)
 
-df_res = pd.DataFrame(results_list)
-# --- Terminal table output: show OPEX for all scenarios in a nice table ---
-try:
-    disp = df_res.copy()
-    # add scenario index (1-based) and format OPEX
-    disp.insert(0, 'scenario', range(1, len(disp) + 1))
-    disp['opex'] = disp['opex'].map(lambda x: f"{x:,.2f} €")
-    disp = disp[['scenario', 'gas_price_MWh', 'electricity_price_MWh', 'opex']]
-    print('\nOPEX per scenario:')
-    print(disp.to_string(index=False))
-except Exception as e:
-    print(f"Fehler beim Erstellen der Ergebnis-Tabelle: {e}")
-import matplotlib.pyplot as plt
-plt.figure(figsize=(8, 6))
-# Scatter plot: one point per scenario, colored by OPEX
-sc = plt.scatter(df_res['electricity_price_MWh'], df_res['gas_price_MWh'], c=df_res['opex'], cmap='viridis', s=80, edgecolors='k')
-plt.xlabel('Electricity price (€/MWh)')
-plt.ylabel('Gas price (€/MWh)')
-plt.title('OPEX scatter (each point = scenario)')
-cbar = plt.colorbar(sc)
-cbar.set_label('OPEX (€)')
-plt.tight_layout()
-plt.show()
+# --- Save all scenario results to CSV ---
+df_res.to_csv("Florian/OPEX_results_scenarios_LP.csv", index=False)
+print(f"\nOPEX results saved to Florian/OPEX_results_scenarios_LP.csv")
+
+
+

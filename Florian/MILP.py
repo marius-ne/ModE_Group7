@@ -199,6 +199,7 @@ def run_mode_project_milp_exact(c_gas=0.16, c_el=0.21, demand_csv_path=None):
     # --- 8. Lösen ---
     solver = pyo.SolverFactory('gurobi')
     solver.options['MIPGap'] = 0.001 
+    solver.options['TimeLimit'] = 60  # Optional: Zeitlimit von 5 Minuten setzen
     
     print("Starte MILP Optimierung (Exakte Diskretisierung)...")
     results = solver.solve(m, tee=True) 
@@ -213,75 +214,46 @@ def run_mode_project_milp_exact(c_gas=0.16, c_el=0.21, demand_csv_path=None):
 # ==========================================
 # AUFRUF DES SKRIPTS
 # ==========================================
-csv_pfad = "energy_demands.csv"
-model_milp_exact, results_milp_exact = run_mode_project_milp_exact(demand_csv_path=csv_pfad)
-
-# import matplotlib.pyplot as plt
 
 # after solve:
-model = model_milp_exact
-
-# data = []
-# for k in model.K:
-#     e_tes = pyo.value(model.E_TES[k])
-#     q_chp_1= pyo.value(model.Q_CHP_out[1, k])
-#     q_chp_2 = pyo.value(model.Q_CHP_out[2, k])
-#     q_b_1 = pyo.value(model.Q_B_out[1, k])
-#     q_b_2 = pyo.value(model.Q_B_out[2, k])
-#     q_chp = q_chp_1 + q_chp_2
-#     q_b = q_b_1 + q_b_2
-#     e_grid = pyo.value(model.P_grid[k])
-#     data.append({'k': k, 'energy': e_tes, 'q_chp': q_chp, 'q_b': q_b, 'e_grid': e_grid})
-
-# x = [row['k'] for row in data]
-
-# y_1 = [row['energy'] for row in data]
 
 
-# y_2 = [row['q_chp'] for row in data]
-
-# y_3 = [row['q_b'] for row in data]
 
 
-# y_4 = [row['e_grid'] for row in data]
+# # --- Terminal table output: show OPEX for this run in the same format as LP_V2.py ---
+# try:
+#     opex = float(pyo.value(model_milp_exact.obj))
+#     gas_price_MWh = float(model_milp_exact.c_G[0] * 1000)
+#     electricity_price_MWh = float(model_milp_exact.c_el[0] * 1000)
+#     disp = pd.DataFrame([{
+#         'scenario': 1,
+#         'gas_price_MWh': gas_price_MWh,
+#         'electricity_price_MWh': electricity_price_MWh,
+#         'opex': opex,
+#     }])
+#     disp['opex'] = disp['opex'].map(lambda x: f"{x:,.2f} €")
+#     print('\nOPEX per scenario:')
+#     print(disp.to_string(index=False))
+# except Exception as e:
+#     print(f"Fehler beim Erstellen der Ergebnis-Tabelle: {e}")
 
-# fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+price_csv_path = "Erdem/training_samples_sobol.csv"
+demand_csv_path = "Erdem/energy_demands.csv"
 
-# axs[0].plot(x, y_1, label='E_TES', color='tab:blue')
-# axs[0].set_title('TES Energy Content')
-# axs[0].set_ylabel('E_TES')
-# axs[0].legend()
-# axs[0].grid(True)
+prices_df = pd.read_csv(price_csv_path)
+scenario_results = []
+for idx, row in prices_df.iterrows():
+    gas_mwh = float(row['gas_price'])
+    el_mwh = float(row['electricity_price'])
+    # Preise in CSV sind in €/MWh, demands in kWh -> Umrechnung in €/kWh
+    gas_kwh = gas_mwh / 1000.0
+    el_kwh = el_mwh / 1000.0
+    model_s, results_s = run_mode_project_milp_exact(c_gas=gas_kwh, c_el=el_kwh, demand_csv_path=demand_csv_path)
+    opex = float(pyo.value(model_s.obj))
+    scenario_results.append({'gas_price_MWh': gas_mwh, 'electricity_price_MWh': el_mwh, 'opex': f"{opex:.2f}"})
+    
+df_res = pd.DataFrame(scenario_results)
 
-# axs[1].plot(x, y_2, label='Q_CHP_out', color='tab:orange')
-# axs[1].plot(x, y_3, label='Q_B_out', color='tab:green')
-# axs[1].plot(x, y_4, label='P_grid', color='tab:red')
-# axs[1].set_title('Plant Outputs')
-# axs[1].set_xlabel('Time step k')
-# axs[1].set_ylabel('Power / Heat')
-# axs[1].legend()
-# axs[1].grid(True)
-
-#plt.tight_layout()
-# plt.show()
-rows = []
-for k in model.K:
-    rows.append({
-        "k": k,
-        "Q_D": pyo.value(model.Q_D[k]),
-        "P_D": pyo.value(model.P_D[k]),
-        "E_TES": pyo.value(model.E_TES[k]),
-        "Qin_TES": pyo.value(model.Q_TES_in[k]),
-        "Qout_TES": pyo.value(model.Q_TES_out[k]),
-        "Pgrid": pyo.value(model.P_grid[k]),
-        **{f"dB{i}": pyo.value(model.delta_B[i, k]) for i in model.B_set},
-        **{f"dCHP{i}": pyo.value(model.delta_CHP[i, k]) for i in model.CHP_set},
-        **{f"Qin_B{i}": pyo.value(model.Q_B_in[i, k]) for i in model.B_set},
-        **{f"Qout_B{i}": pyo.value(model.Q_B_out[i, k]) for i in model.B_set},
-        **{f"Qin_CHP{i}": pyo.value(model.Q_CHP_in[i, k]) for i in model.CHP_set},
-        **{f"Qout_CHP{i}": pyo.value(model.Q_CHP_out[i, k]) for i in model.CHP_set},
-        **{f"Pout_CHP{i}": pyo.value(model.P_CHP_out[i, k]) for i in model.CHP_set},
-    })
-dispatch = pd.DataFrame(rows)
-dispatch.to_csv("Florian/dispatch_result_MILP.csv", index=False)
-print("Dispatch written to dispatch_result_MILP.csv")
+# --- Save all scenario results to CSV ---
+df_res.to_csv("Florian/OPEX_results_scenarios_MILP.csv", index=False)
+print(f"\nOPEX results saved to Florian/OPEX_results_scenarios_MILP.csv")
