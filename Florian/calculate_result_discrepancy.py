@@ -8,5 +8,6 @@ df_opex_list = pd.merge(df_milp[['opex']], df_lp[['opex']], left_index=True, rig
 print(df_opex_list.head())
 
 df_opex_list["deviation_percentage_relative_to_MILP"] = (df_opex_list["opex_lp"] - df_opex_list["opex_milp"]) / df_opex_list["opex_milp"] * 100
+df_opex_list["deviation_percentage_relative_to_MILP"] = df_opex_list["deviation_percentage_relative_to_MILP"].round(2)
 
 df_opex_list.to_csv("Florian/OPEX_discrepancy_MILP_vs_LP.csv", index=False)
