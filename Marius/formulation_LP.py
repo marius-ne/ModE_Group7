@@ -228,7 +228,7 @@ def plot_dispatch_results(
 
     k = dispatch["k"].to_numpy()
 
-    fig, axes = plt.subplots(4, 1, figsize=(14, 13), sharex=True, constrained_layout=True)
+    fig, axes = plt.subplots(4, 1, figsize=(18, 18), sharex=True)
 
     # 1) Unit commitment / utilization (continuous 0..1)
     from matplotlib.colors import LinearSegmentedColormap
@@ -260,28 +260,24 @@ def plot_dispatch_results(
     axes[0].set_title("Unit Utilization (0..1)", fontsize=fs_title)
     axes[0].set_ylabel("Units", fontsize=fs_label)
 
-    # Use one shared colorbar for all axes so panel widths stay aligned.
-    cbar = fig.colorbar(im, ax=axes[0], orientation="vertical", pad=0.02)
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes as _inset_axes
+    cax = _inset_axes(axes[0], width="3%", height="100%", loc="lower left",
+                      bbox_to_anchor=(1.01, 0., 1, 1), bbox_transform=axes[0].transAxes,
+                      borderpad=0)
+    cbar = fig.colorbar(im, cax=cax)
     cbar.set_label("Utilization [0..1]", fontsize=fs_label)
     cbar.ax.tick_params(labelsize=fs_tick)
 
     # 2) TES state and flows (same order as MILP)
-    axes[1].bar(k, dispatch["Qout_TES"], width=0.9, label="TES discharge", color="#2C7FB8", alpha=0.9)
-    axes[1].bar(k, -dispatch["Qin_TES"], width=0.9, label="TES charge", color="#EF3B2C", alpha=0.7)
+    axes[1].bar(k, dispatch["Qout_TES"], width=0.9, label="TES discharge [kW]", color="#2C7FB8", alpha=0.9)
+    axes[1].bar(k, -dispatch["Qin_TES"], width=0.9, label="TES charge [kW]", color="#EF3B2C", alpha=0.7)
+    axes[1].plot(k, dispatch["E_TES"], color="#6A3D9A", linewidth=2.0, label="TES stored energy [kWh]")
     axes[1].axhline(0.0, color="black", linewidth=0.9)
-    axes[1].set_ylabel("TES power [kW]", fontsize=fs_label)
+    axes[1].set_ylabel("TES output power [kW]\n/ stored energy [kWh]", fontsize=fs_label)
     axes[1].set_title("TES Operation", fontsize=fs_title)
     axes[1].tick_params(labelsize=fs_tick)
     axes[1].grid(True, axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
-
-    ax1_twin = axes[1].twinx()
-    ax1_twin.plot(k, dispatch["E_TES"], color="#6A3D9A", linewidth=2.0, label="TES energy")
-    ax1_twin.set_ylabel("TES energy [kWh]", fontsize=fs_label)
-    ax1_twin.tick_params(labelsize=fs_tick)
-
-    lines1, labels1 = axes[1].get_legend_handles_labels()
-    lines2, labels2 = ax1_twin.get_legend_handles_labels()
-    axes[1].legend(lines1 + lines2, labels1 + labels2, loc="upper right", fontsize=fs_legend)
+    axes[1].legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, fontsize=fs_legend)
 
     # 3) Electrical supply mix (same order as MILP)
     p_chp_total = dispatch["Pout_CHP1"] + dispatch["Pout_CHP2"]
@@ -290,10 +286,10 @@ def plot_dispatch_results(
     axes[2].plot(k, dispatch["P_D"], color="#111111", linewidth=1.7, linestyle="--", label="Electric demand")
     axes[2].set_title("Electrical Supply Mix", fontsize=fs_title)
     axes[2].set_ylabel("Power [kW]", fontsize=fs_label)
-    axes[2].set_xlabel("Time step k [-]", fontsize=fs_label)
+
     axes[2].tick_params(labelsize=fs_tick)
     axes[2].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
-    axes[2].legend(loc="upper right", fontsize=fs_legend)
+    axes[2].legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, fontsize=fs_legend)
 
     # 4) Heat supply mix and gas purchase (same order as MILP)
     q_boiler_total = dispatch["Qout_B1"] + dispatch["Qout_B2"]
@@ -306,25 +302,21 @@ def plot_dispatch_results(
     axes[3].plot(k, q_tes_net, color="#2C7FB8", linewidth=1.8, label="TES net heat (discharge-charge)")
     axes[3].plot(k, dispatch["Q_D"], color="#111111", linewidth=1.7, linestyle="--", label="Heat demand")
     axes[3].set_title("Heat Supply and Gas Purchase", fontsize=fs_title)
-    axes[3].set_ylabel("Heat flow [kW]", fontsize=fs_label)
+    axes[3].bar(k, q_gas_total, width=0.85, alpha=0.22, color="#33A02C", label="Gas purchased (fuel input)")
+    axes[3].set_ylabel("Heat flow / Gas input [kW]", fontsize=fs_label)
     axes[3].set_xlabel("Time step k [-]", fontsize=fs_label)
     axes[3].tick_params(labelsize=fs_tick)
     axes[3].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
-
-    ax2_twin = axes[3].twinx()
-    ax2_twin.bar(k, q_gas_total, width=0.85, alpha=0.22, color="#33A02C", label="Gas purchased (fuel input)")
-    ax2_twin.set_ylabel("Gas purchased [kW_fuel]", fontsize=fs_label)
-    ax2_twin.tick_params(labelsize=fs_tick)
-
-    lines3, labels3 = axes[3].get_legend_handles_labels()
-    lines4, labels4 = ax2_twin.get_legend_handles_labels()
-    axes[3].legend(lines3 + lines4, labels3 + labels4, loc="upper right", fontsize=fs_legend)
+    axes[3].legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, fontsize=fs_legend)
     _title = f"Operational Dispatch Overview (LP) — gas={gas_value:.3f} €/kWh, el={el_value:.3f} €/kWh"
     if opex is not None:
-        _title += f"\nTotal OPEX: {opex:,.2f} €"
+        ratio_str = f"   |   c_G/c_el = {gas_value/el_value:.3f}" if el_value != 0 else ""
+        _title += f"\nTotal OPEX: {opex:,.2f} €{ratio_str}"
     fig.suptitle(_title, fontsize=fs_suptitle)
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.subplots_adjust(right=0.78, top=0.92)
     fig.savefig(output_file, dpi=150)
     plt.close(fig)
 
