@@ -21,13 +21,10 @@ from pyomo.environ import (
 )
 
 # ---------------------------------------------------------------------------
-# 0. User-settable inputs
+# 0. Fixed inputs
 # ---------------------------------------------------------------------------
-DEMAND_CSV = "energy_demands.csv"
+DEMAND_CSV = Path(__file__).resolve().parent.parent / "energy_demands.csv"
 PGRID_DOMAIN = NonNegativeReals       # import only; use Reals to allow export
-
-cG = 0.16     # gas cost  [currency / kWh]
-cel = 0.1    # grid electricity cost [currency / kWh]
 
 # ---------------------------------------------------------------------------
 # 1. Parameters
@@ -66,171 +63,188 @@ beta_CHP_el = (1.0 - lam_in_min_CHP) / (1.0 - lam_out_min_CHP_el)
 # ---------------------------------------------------------------------------
 # 2. Exact ZOH discretization of the TES ODE
 # ---------------------------------------------------------------------------
-A = np.array([[-1.0 / tau_loss]])
-Bc = np.array([[eta_in_TES, -1.0 / eta_out_TES]])
-n_x, n_u = A.shape[0], Bc.shape[1]
-M = np.zeros((n_x + n_u, n_x + n_u))
-M[:n_x, :n_x] = A
-M[:n_x, n_x:] = Bc
-Md = expm(M * dt)
-a = float(Md[0, 0])
-b1, b2 = (float(v) for v in Md[:n_x, n_x:].ravel())
+_A = np.array([[-1.0 / tau_loss]])
+_Bc = np.array([[eta_in_TES, -1.0 / eta_out_TES]])
+_n_x, _n_u = _A.shape[0], _Bc.shape[1]
+_M = np.zeros((_n_x + _n_u, _n_x + _n_u))
+_M[:_n_x, :_n_x] = _A
+_M[:_n_x, _n_x:] = _Bc
+_Md = expm(_M * dt)
+a = float(_Md[0, 0])
+b1, b2 = (float(v) for v in _Md[:_n_x, _n_x:].ravel())
 
 # ---------------------------------------------------------------------------
 # 3. Demand time series from CSV
 # ---------------------------------------------------------------------------
-df = pd.read_csv(DEMAND_CSV)
-P_D_series = df["hourly electricity demand [kW]"].to_numpy()
-Q_D_series = df["hourly heat demand [kW]"].to_numpy()
-N = len(df)
-
-# ---------------------------------------------------------------------------
-# 4. Model
-# ---------------------------------------------------------------------------
-m = ConcreteModel("ModE_P5_TES_dispatch_LP_binary")
-
-m.K = RangeSet(0, N - 1)
-m.B = Set(initialize=[1, 2])
-m.CHP = Set(initialize=[1, 2])
-
-m.Q_D = Param(m.K, initialize={k: float(Q_D_series[k]) for k in range(N)})
-m.P_D = Param(m.K, initialize={k: float(P_D_series[k]) for k in range(N)})
-
-# --- Continuous decision variables ---
-m.Qin_B = Var(m.B, m.K, domain=NonNegativeReals)
-m.Qin_CHP = Var(m.CHP, m.K, domain=NonNegativeReals)
-m.Qin_TES = Var(m.K, domain=NonNegativeReals)
-m.Qout_TES = Var(m.K, domain=NonNegativeReals)
-m.Pgrid = Var(m.K, domain=PGRID_DOMAIN)
-
-# Commitment variables: relaxed from Binary to continuous [0, 1]
-m.dB = Var(m.B, m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
-m.dCHP = Var(m.CHP, m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
-m.din_TES = Var(m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
-m.dout_TES = Var(m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
-
-# --- Auxiliary variables ---
-m.E_TES = Var(m.K, domain=NonNegativeReals, bounds=(E_min_TES, E_nom_TES))
-m.Qout_B = Var(m.B, m.K, domain=Reals)
-m.Qout_CHP = Var(m.CHP, m.K, domain=Reals)
-m.Pout_CHP = Var(m.CHP, m.K, domain=Reals)
-
-
-@m.Expression(m.K)
-def E_G(m, k):
-    return dt * (sum(m.Qin_B[i, k] for i in m.B) + sum(m.Qin_CHP[i, k] for i in m.CHP))
-
-
-@m.Expression(m.K)
-def E_el(m, k):
-    return dt * m.Pgrid[k]
+_df = pd.read_csv(DEMAND_CSV)
+P_D_series = _df["hourly electricity demand [kW]"].to_numpy()
+Q_D_series = _df["hourly heat demand [kW]"].to_numpy()
+N = len(_df)
 
 
 # ---------------------------------------------------------------------------
-# 5. Constraints  (identical structure to MILP; delta products remain linear
-#    because the big-M terms multiply the continuous delta by a constant)
+# 4. Callable solve function
 # ---------------------------------------------------------------------------
+def solve(c_G: float, c_el: float, *, tee: bool = False) -> tuple[float, pd.DataFrame]:
+    """Build and solve the LP-binary-relaxation dispatch model. Returns (opex, dispatch_df)."""
+    m = ConcreteModel("ModE_P5_TES_dispatch_LP_binary")
 
-# --- TES ---
-@m.Constraint(m.K)
-def tes_dynamics(m, k):
-    k_next = (k + 1) % N
-    return m.E_TES[k_next] == a * m.E_TES[k] + b1 * m.Qin_TES[k] + b2 * m.Qout_TES[k]
+    m.K = RangeSet(0, N - 1)
+    m.B = Set(initialize=[1, 2])
+    m.CHP = Set(initialize=[1, 2])
 
+    m.Q_D = Param(m.K, initialize={k: float(Q_D_series[k]) for k in range(N)})
+    m.P_D = Param(m.K, initialize={k: float(P_D_series[k]) for k in range(N)})
 
-@m.Constraint(m.K)
-def tes_charge_ub(m, k):
-    return m.Qin_TES[k] <= m.din_TES[k] * E_nom_TES / tau_in
+    # --- Continuous decision variables ---
+    m.Qin_B = Var(m.B, m.K, domain=NonNegativeReals)
+    m.Qin_CHP = Var(m.CHP, m.K, domain=NonNegativeReals)
+    m.Qin_TES = Var(m.K, domain=NonNegativeReals)
+    m.Qout_TES = Var(m.K, domain=NonNegativeReals)
+    m.Pgrid = Var(m.K, domain=PGRID_DOMAIN)
 
+    # Commitment variables: relaxed from Binary to continuous [0, 1]
+    m.dB = Var(m.B, m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
+    m.dCHP = Var(m.CHP, m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
+    m.din_TES = Var(m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
+    m.dout_TES = Var(m.K, domain=NonNegativeReals, bounds=(0.0, 1.0))
 
-@m.Constraint(m.K)
-def tes_charge_lb(m, k):
-    return m.Qin_TES[k] >= m.din_TES[k] * Qin_min_TES
+    # --- Auxiliary variables ---
+    m.E_TES = Var(m.K, domain=NonNegativeReals, bounds=(E_min_TES, E_nom_TES))
+    m.Qout_B = Var(m.B, m.K, domain=Reals)
+    m.Qout_CHP = Var(m.CHP, m.K, domain=Reals)
+    m.Pout_CHP = Var(m.CHP, m.K, domain=Reals)
 
+    @m.Expression(m.K)
+    def E_G(m, k):
+        return dt * (sum(m.Qin_B[i, k] for i in m.B) + sum(m.Qin_CHP[i, k] for i in m.CHP))
 
-@m.Constraint(m.K)
-def tes_discharge_ub(m, k):
-    return m.Qout_TES[k] <= m.dout_TES[k] * E_nom_TES / tau_out
+    @m.Expression(m.K)
+    def E_el(m, k):
+        return dt * m.Pgrid[k]
 
+    # ---------------------------------------------------------------------------
+    # 5. Constraints  (identical structure to MILP; delta products remain linear
+    #    because the big-M terms multiply the continuous delta by a constant)
+    # ---------------------------------------------------------------------------
 
-@m.Constraint(m.K)
-def tes_discharge_lb(m, k):
-    return m.Qout_TES[k] >= m.dout_TES[k] * Qout_min_TES
+    # --- TES ---
+    @m.Constraint(m.K)
+    def tes_dynamics(m, k):
+        k_next = (k + 1) % N
+        return m.E_TES[k_next] == a * m.E_TES[k] + b1 * m.Qin_TES[k] + b2 * m.Qout_TES[k]
 
+    @m.Constraint(m.K)
+    def tes_charge_ub(m, k):
+        return m.Qin_TES[k] <= m.din_TES[k] * E_nom_TES / tau_in
 
-@m.Constraint(m.K)
-def tes_no_simultaneous(m, k):
-    return m.din_TES[k] + m.dout_TES[k] <= 1
+    @m.Constraint(m.K)
+    def tes_charge_lb(m, k):
+        return m.Qin_TES[k] >= m.din_TES[k] * Qin_min_TES
 
+    @m.Constraint(m.K)
+    def tes_discharge_ub(m, k):
+        return m.Qout_TES[k] <= m.dout_TES[k] * E_nom_TES / tau_out
 
-# --- Boilers ---
-@m.Constraint(m.B, m.K)
-def boiler_output(m, i, k):
-    return m.Qout_B[i, k] == Qout_nom_B * (
-        m.dB[i, k] * lam_out_min_B
-        + (1.0 / beta_B) * (m.Qin_B[i, k] * eta_nom_B / Qout_nom_B - m.dB[i, k] * lam_in_min_B)
-    )
+    @m.Constraint(m.K)
+    def tes_discharge_lb(m, k):
+        return m.Qout_TES[k] >= m.dout_TES[k] * Qout_min_TES
 
+    @m.Constraint(m.K)
+    def tes_no_simultaneous(m, k):
+        return m.din_TES[k] + m.dout_TES[k] <= 1
 
-@m.Constraint(m.B, m.K)
-def boiler_fuel_ub(m, i, k):
-    return m.Qin_B[i, k] <= m.dB[i, k] * Qout_nom_B / eta_nom_B
+    # --- Boilers ---
+    @m.Constraint(m.B, m.K)
+    def boiler_output(m, i, k):
+        return m.Qout_B[i, k] == Qout_nom_B * (
+            m.dB[i, k] * lam_out_min_B
+            + (1.0 / beta_B) * (m.Qin_B[i, k] * eta_nom_B / Qout_nom_B - m.dB[i, k] * lam_in_min_B)
+        )
 
+    @m.Constraint(m.B, m.K)
+    def boiler_fuel_ub(m, i, k):
+        return m.Qin_B[i, k] <= m.dB[i, k] * Qout_nom_B / eta_nom_B
 
-@m.Constraint(m.B, m.K)
-def boiler_fuel_lb(m, i, k):
-    return m.Qin_B[i, k] >= m.dB[i, k] * lam_in_min_B * Qout_nom_B / eta_nom_B
+    @m.Constraint(m.B, m.K)
+    def boiler_fuel_lb(m, i, k):
+        return m.Qin_B[i, k] >= m.dB[i, k] * lam_in_min_B * Qout_nom_B / eta_nom_B
 
+    # --- CHPs ---
+    @m.Constraint(m.CHP, m.K)
+    def chp_heat(m, i, k):
+        return m.Qout_CHP[i, k] == Qout_nom_CHP * (
+            m.dCHP[i, k] * lam_out_min_CHP_th
+            + (1.0 / beta_CHP_th) * (m.Qin_CHP[i, k] * eta_nom_CHP_th / Qout_nom_CHP - m.dCHP[i, k] * lam_in_min_CHP)
+        )
 
-# --- CHPs ---
-@m.Constraint(m.CHP, m.K)
-def chp_heat(m, i, k):
-    return m.Qout_CHP[i, k] == Qout_nom_CHP * (
-        m.dCHP[i, k] * lam_out_min_CHP_th
-        + (1.0 / beta_CHP_th) * (m.Qin_CHP[i, k] * eta_nom_CHP_th / Qout_nom_CHP - m.dCHP[i, k] * lam_in_min_CHP)
-    )
+    @m.Constraint(m.CHP, m.K)
+    def chp_power(m, i, k):
+        return m.Pout_CHP[i, k] == Pout_nom_CHP * (
+            m.dCHP[i, k] * lam_out_min_CHP_el
+            + (1.0 / beta_CHP_el) * (m.Qin_CHP[i, k] * eta_nom_CHP_el / Pout_nom_CHP - m.dCHP[i, k] * lam_in_min_CHP)
+        )
 
+    @m.Constraint(m.CHP, m.K)
+    def chp_fuel_ub(m, i, k):
+        return m.Qin_CHP[i, k] <= m.dCHP[i, k] * Qout_nom_CHP / eta_nom_CHP_th
 
-@m.Constraint(m.CHP, m.K)
-def chp_power(m, i, k):
-    return m.Pout_CHP[i, k] == Pout_nom_CHP * (
-        m.dCHP[i, k] * lam_out_min_CHP_el
-        + (1.0 / beta_CHP_el) * (m.Qin_CHP[i, k] * eta_nom_CHP_el / Pout_nom_CHP - m.dCHP[i, k] * lam_in_min_CHP)
-    )
+    @m.Constraint(m.CHP, m.K)
+    def chp_fuel_lb(m, i, k):
+        return m.Qin_CHP[i, k] >= m.dCHP[i, k] * lam_in_min_CHP * Pout_nom_CHP / eta_nom_CHP_el
 
+    # --- Balances ---
+    @m.Constraint(m.K)
+    def heat_balance(m, k):
+        return (
+            sum(m.Qout_CHP[i, k] for i in m.CHP)
+            + sum(m.Qout_B[i, k] for i in m.B)
+            + m.Qout_TES[k] - m.Qin_TES[k]
+            == m.Q_D[k]
+        )
 
-@m.Constraint(m.CHP, m.K)
-def chp_fuel_ub(m, i, k):
-    return m.Qin_CHP[i, k] <= m.dCHP[i, k] * Qout_nom_CHP / eta_nom_CHP_th
+    @m.Constraint(m.K)
+    def power_balance(m, k):
+        return sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k] == m.P_D[k]
 
+    # ---------------------------------------------------------------------------
+    # 6. Objective
+    # ---------------------------------------------------------------------------
+    @m.Objective(sense=minimize)
+    def total_cost(m):
+        return c_G * sum(m.E_G[k] for k in m.K) + c_el * sum(m.E_el[k] for k in m.K)
 
-@m.Constraint(m.CHP, m.K)
-def chp_fuel_lb(m, i, k):
-    return m.Qin_CHP[i, k] >= m.dCHP[i, k] * lam_in_min_CHP * Pout_nom_CHP / eta_nom_CHP_el
+    # ---------------------------------------------------------------------------
+    # 7. Solve
+    # ---------------------------------------------------------------------------
+    solver = SolverFactory("gurobi")
+    solver.options["TimeLimit"] = 300
+    solver.solve(m, tee=tee)
 
+    opex = value(m.total_cost)
 
-# --- Balances ---
-@m.Constraint(m.K)
-def heat_balance(m, k):
-    return (
-        sum(m.Qout_CHP[i, k] for i in m.CHP)
-        + sum(m.Qout_B[i, k] for i in m.B)
-        + m.Qout_TES[k] - m.Qin_TES[k]
-        == m.Q_D[k]
-    )
+    rows = []
+    for k in m.K:
+        rows.append({
+            "k": k,
+            "Q_D": value(m.Q_D[k]),
+            "P_D": value(m.P_D[k]),
+            "E_TES": value(m.E_TES[k]),
+            "Qin_TES": value(m.Qin_TES[k]),
+            "Qout_TES": value(m.Qout_TES[k]),
+            "Pgrid": value(m.Pgrid[k]),
+            **{f"dB{i}": value(m.dB[i, k]) for i in m.B},
+            **{f"dCHP{i}": value(m.dCHP[i, k]) for i in m.CHP},
+            "din_TES": value(m.din_TES[k]),
+            "dout_TES": value(m.dout_TES[k]),
+            **{f"Qin_B{i}": value(m.Qin_B[i, k]) for i in m.B},
+            **{f"Qout_B{i}": value(m.Qout_B[i, k]) for i in m.B},
+            **{f"Qin_CHP{i}": value(m.Qin_CHP[i, k]) for i in m.CHP},
+            **{f"Qout_CHP{i}": value(m.Qout_CHP[i, k]) for i in m.CHP},
+            **{f"Pout_CHP{i}": value(m.Pout_CHP[i, k]) for i in m.CHP},
+        })
 
-
-@m.Constraint(m.K)
-def power_balance(m, k):
-    return sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k] == m.P_D[k]
-
-
-# ---------------------------------------------------------------------------
-# 6. Objective
-# ---------------------------------------------------------------------------
-@m.Objective(sense=minimize)
-def total_cost(m):
-    return cG * sum(m.E_G[k] for k in m.K) + cel * sum(m.E_el[k] for k in m.K)
+    return opex, pd.DataFrame(rows)
 
 
 def plot_dispatch_results(
@@ -250,8 +264,8 @@ def plot_dispatch_results(
     fs_legend   = max(fontsize - 1, 7)
     fs_suptitle = round(fontsize * 1.4)
 
-    gas_value = cG if gas_price is None else gas_price
-    el_value = cel if el_price is None else el_price
+    gas_value = gas_price if gas_price is not None else 0.0
+    el_value = el_price if el_price is not None else 0.0
 
     k = dispatch["k"].to_numpy()
 
@@ -351,45 +365,23 @@ def plot_dispatch_results(
 
 
 # ---------------------------------------------------------------------------
-# 7. Solve with Gurobi
+# Standalone entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    _cG = 0.16
+    _cel = 0.1
+
     print(f"N = {N} intervals, dt = {dt} h  ->  discretization a={a:.6f}, b1={b1:.6f}, b2={b2:.6f}")
     print(f"beta_B={beta_B:.5f}, beta_CHP_th={beta_CHP_th:.5f}, beta_CHP_el={beta_CHP_el:.5f}")
     print("Commitment variables: continuous [0, 1]  (LP relaxation of MILP)")
 
-    solver = SolverFactory("gurobi")
-    solver.options["TimeLimit"] = 300
-    results = solver.solve(m, tee=True)
+    opex, dispatch = solve(_cG, _cel, tee=True)
 
-    print("\nSolver status :", results.solver.status)
-    print("Termination   :", results.solver.termination_condition)
-    print(f"Total cost    : {value(m.total_cost):.2f}")
+    print("\nSolver status: done")
+    print(f"Total cost    : {opex:.2f}")
 
-    # --- Extract dispatch ---
-    rows = []
-    for k in m.K:
-        rows.append({
-            "k": k,
-            "Q_D": value(m.Q_D[k]),
-            "P_D": value(m.P_D[k]),
-            "E_TES": value(m.E_TES[k]),
-            "Qin_TES": value(m.Qin_TES[k]),
-            "Qout_TES": value(m.Qout_TES[k]),
-            "Pgrid": value(m.Pgrid[k]),
-            **{f"dB{i}": value(m.dB[i, k]) for i in m.B},
-            **{f"dCHP{i}": value(m.dCHP[i, k]) for i in m.CHP},
-            "din_TES": value(m.din_TES[k]),
-            "dout_TES": value(m.dout_TES[k]),
-            **{f"Qin_B{i}": value(m.Qin_B[i, k]) for i in m.B},
-            **{f"Qout_B{i}": value(m.Qout_B[i, k]) for i in m.B},
-            **{f"Qin_CHP{i}": value(m.Qin_CHP[i, k]) for i in m.CHP},
-            **{f"Qout_CHP{i}": value(m.Qout_CHP[i, k]) for i in m.CHP},
-            **{f"Pout_CHP{i}": value(m.Pout_CHP[i, k]) for i in m.CHP},
-        })
-    dispatch = pd.DataFrame(rows)
     dispatch.to_csv("Marius/results/dispatch_result_LP_binary.csv", index=False)
     print("Dispatch written to Marius/results/dispatch_result_LP_binary.csv")
 
-    plot_dispatch_results(dispatch, opex=value(m.total_cost), fontsize=18)
+    plot_dispatch_results(dispatch, gas_price=_cG, el_price=_cel, opex=opex, fontsize=18)
     print("Dispatch visualization written to Marius/visualization/dispatch_overview_LP_binary.png")
