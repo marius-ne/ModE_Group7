@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 # Ensure Marius/ is importable regardless of working directory
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, "Marius")
 
 import formulation_MILP as _milp
 import formulation_LP as _lp
@@ -33,7 +33,7 @@ import formulation_LP_binary as _lp_bin
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-BASELINE_FILE = Path(__file__).parent / "results" / "regression_baselines.json"
+BASELINE_FILE = Path(__file__).parent / ".." / "results" / "regression_baselines.json"
 
 # Five price pairs spanning the interesting range of gas vs electricity costs.
 # Each triggers a meaningfully different dispatch strategy.
