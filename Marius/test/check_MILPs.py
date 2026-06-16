@@ -28,7 +28,7 @@ for pair in PRICE_PERMUTATIONS:
     print(f"  MILP_norm: OPEX = {opex_norm:,.2f}")
 
     # Solutions are allowed to be 1 MIP-Gap apart. This is due to
-    # the B&B search tree potentially exploring different branches 
+    # the B&B search tree potentially exploring different branches
     # in the two formulations
     print(f"  Relative difference: {(opex_norm-opex)/opex:.2%}\n")
     if abs(opex_norm-opex) > MIP_GAP*opex:
