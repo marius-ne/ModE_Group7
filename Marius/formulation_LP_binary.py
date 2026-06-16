@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy.linalg import expm
 from pyomo.environ import (
     ConcreteModel, Set, RangeSet, Param, Var, Expression, Objective, Constraint,
     Reals, NonNegativeReals, SolverFactory, value, minimize,
@@ -61,17 +60,11 @@ beta_CHP_th = (1.0 - lam_in_min_CHP) / (1.0 - lam_out_min_CHP_th)
 beta_CHP_el = (1.0 - lam_in_min_CHP) / (1.0 - lam_out_min_CHP_el)
 
 # ---------------------------------------------------------------------------
-# 2. Exact ZOH discretization of the TES ODE
+# 2. Exact discretization of the TES ODE  (section 1.1)
 # ---------------------------------------------------------------------------
-_A = np.array([[-1.0 / tau_loss]])
-_Bc = np.array([[eta_in_TES, -1.0 / eta_out_TES]])
-_n_x, _n_u = _A.shape[0], _Bc.shape[1]
-_M = np.zeros((_n_x + _n_u, _n_x + _n_u))
-_M[:_n_x, :_n_x] = _A
-_M[:_n_x, _n_x:] = _Bc
-_Md = expm(_M * dt)
-a = float(_Md[0, 0])
-b1, b2 = (float(v) for v in _Md[:_n_x, _n_x:].ravel())
+a  = 0.9950124791926823   # exp(-dt / tau_loss)
+b1 = 0.9476289533903605   # eta_in_TES  * tau_loss * (1 - exp(-dt / tau_loss))
+b2 = -1.050004380487934   # -(1/eta_out_TES) * tau_loss * (1 - exp(-dt / tau_loss))
 
 # ---------------------------------------------------------------------------
 # 3. Demand time series from CSV
