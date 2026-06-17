@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-06-17T13:12:20.978348",
+  "objective_value": 30720.49326120514,
+  "gas_price": 0.315,
+  "electricity_price": 0.065,
+  "solver_status": "ok",
+  "solver_termination_condition": "optimal",
+  "mip_gap": 7.105313269860564e-14,
+  "solve_time": 0.026000022888183594,
+  "num_variables": 3697,
+  "num_constraints": 4371,
+  "num_binary_variables": 1008,
+  "num_nonzeros": 10756
+}
