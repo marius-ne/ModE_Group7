@@ -7,8 +7,9 @@ modes, giving a feasible MILP solution whose cost is an upper bound:
   - "chp_on":     dCHP=1, dB=0, din_TES=0, dout_TES=0 (TES off by default)
   - "rounded":    solve LP lower bound, round all deltas per timestep, re-solve
 
-TES deltas default to 0 (inactive) in boilers_on/chp_on; change din_at/dout_at
-lambdas to enable TES in those modes without restructuring the formulation.
+TES deltas alternate (din=1/dout=0 on even steps, din=0/dout=1 on odd steps) in
+boilers_on/chp_on, giving the solver the option to charge or discharge each step
+without forcing it to (bounds are upper bounds only; actual flows can be zero).
 
 Conventions: same as formulation_MILP.py.
 """
@@ -246,8 +247,8 @@ def solve(
 
             dB_at   = lambda i, k: _b1[k] if i == 1 else _b2[k]
             dCHP_at = lambda i, k: 0.0
-        din_at  = lambda k: 0.0   # TES off by default; set to 1.0 to enable
-        dout_at = lambda k: 0.0   # TES off by default; set to 1.0 to enable
+        din_at  = lambda k: 1.0 if k % 2 == 0 else 0.0   # charge allowed on even steps, discharge on odd
+        dout_at = lambda k: 0.0 if k % 2 == 0 else 1.0   # discharge allowed on odd steps, charge on even
 
     m = ConcreteModel("ModE_P5_TES_dispatch_LP_upper")
 

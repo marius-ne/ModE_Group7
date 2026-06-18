@@ -23,7 +23,7 @@ if REWRITE or not (Path(__file__).parent / ".." / "results" / "opex_vs_price_rat
     # Baseline scaling factor
     c_el = 1
 
-    price_ratios = np.logspace(-1, 1, 30)  # from 0.01 to 100
+    price_ratios = np.logspace(-1, 1, 40)  # from 0.01 to 100
     c_G_values = c_el * price_ratios
     opex_milp_values = []
     opex_lp_lower_values = []
@@ -108,10 +108,33 @@ C_LP_APPROX   = "#35978F"   # teal
 C_DB          = "#1B7837"   # dark green    (delta sums subplot)
 C_DCHP        = "#E08214"   # warm orange   (delta sums subplot)
 
-price_ratios = np.asarray(price_ratios)
-opex_lp_upper_bo_values  = np.asarray(opex_lp_upper_bo_values,  dtype=float)
-opex_lp_upper_chp_values = np.asarray(opex_lp_upper_chp_values, dtype=float)
-opex_lp_upper_min_values = np.fmin(opex_lp_upper_bo_values, opex_lp_upper_chp_values)
+price_ratios                = np.asarray(price_ratios,                dtype=float)
+opex_milp_values            = np.asarray(opex_milp_values,            dtype=float)
+opex_lp_lower_values        = np.asarray(opex_lp_lower_values,        dtype=float)
+opex_lp_upper_bo_values     = np.asarray(opex_lp_upper_bo_values,     dtype=float)
+opex_lp_upper_chp_values    = np.asarray(opex_lp_upper_chp_values,    dtype=float)
+opex_lp_upper_rounded_values= np.asarray(opex_lp_upper_rounded_values,dtype=float)
+opex_lp_approx_mean_values  = np.asarray(opex_lp_approx_mean_values,  dtype=float)
+opex_lp_upper_min_values    = np.fmin(opex_lp_upper_bo_values, opex_lp_upper_chp_values)
+
+# Sanity checks: bounds must bracket the MILP solution at every point.
+# The MILP is solved with mip_gap=1e-2, so its returned objective can be up to 1% above
+# the true optimum. LP upper is also a feasible MILP solution, so LP_upper < MILP_returned
+# is normal within that gap. Only flag if LP_upper < MILP_returned * (1 - MIP_GAP),
+# which would place LP_upper below the solver's own lower bound — a genuine error.
+_MIP_GAP = 1e-2
+_fin = np.isfinite(opex_milp_values) & np.isfinite(opex_lp_lower_values) & np.isfinite(opex_lp_upper_min_values)
+_lower_violations = np.where(_fin & (opex_lp_lower_values > opex_milp_values))[0]
+_upper_violations = np.where(_fin & (opex_lp_upper_min_values < opex_milp_values * (1 - _MIP_GAP)))[0]
+if len(_lower_violations):
+    print(f"ERROR: LP lower bound exceeds MILP at {len(_lower_violations)} point(s):")
+    for _i in _lower_violations:
+        print(f"  r={price_ratios[_i]:.4f}  LP_lower={opex_lp_lower_values[_i]:,.2f}  MILP={opex_milp_values[_i]:,.2f}  diff={opex_lp_lower_values[_i]-opex_milp_values[_i]:+,.2f}")
+if len(_upper_violations):
+    print(f"ERROR: LP upper bound (min of both) is below MILP by more than MIP gap ({_MIP_GAP:.0%}) at {len(_upper_violations)} point(s):")
+    for _i in _upper_violations:
+        rel = (opex_milp_values[_i] - opex_lp_upper_min_values[_i]) / opex_milp_values[_i]
+        print(f"  r={price_ratios[_i]:.4f}  LP_upper={opex_lp_upper_min_values[_i]:,.2f}  MILP={opex_milp_values[_i]:,.2f}  diff={opex_lp_upper_min_values[_i]-opex_milp_values[_i]:+,.2f}  ({rel:.2%})")
 
 
 def _plot_lp_upper(axis):
@@ -196,19 +219,17 @@ _i_lo = max(0, _ins2_inner[0] - 1)
 _i_hi = min(len(price_ratios) - 1, _ins2_inner[-1] + 1)
 _ins2_mask = np.zeros(len(price_ratios), dtype=bool)
 _ins2_mask[_i_lo:_i_hi + 1] = True
-_ins2_valid = np.concatenate([
-    opex_milp_values[_ins2_mask],
-    opex_lp_lower_values[_ins2_mask],
-    opex_lp_upper_bo_values[_ins2_mask],
-    opex_lp_upper_chp_values[_ins2_mask],
-    opex_lp_upper_min_values[_ins2_mask],
-    opex_lp_approx_mean_values[_ins2_mask],
-])
-_ins2_valid = _ins2_valid[np.isfinite(_ins2_valid)]
-_INS2_Y_LO  = _ins2_valid.min() * 0.996
-_INS2_Y_HI  = _ins2_valid.max() * 1.004
+_ins2_strict = (price_ratios >= _INS2_X_LO) & (price_ratios <= _INS2_X_HI)
+_ins2_series = [opex_milp_values, opex_lp_lower_values, opex_lp_upper_bo_values,
+                opex_lp_upper_chp_values, opex_lp_upper_min_values, opex_lp_approx_mean_values]
+_ins2_exp   = np.concatenate([s[_ins2_mask]   for s in _ins2_series])
+_ins2_inner = np.concatenate([s[_ins2_strict] for s in _ins2_series])
+_ins2_exp   = _ins2_exp[np.isfinite(_ins2_exp)]
+_ins2_inner = _ins2_inner[np.isfinite(_ins2_inner)]
+_INS2_Y_LO  = _ins2_exp.min()   * 0.996   # expanded: captures left-edge interpolation dip
+_INS2_Y_HI  = _ins2_inner.max() * 1.004   # strict: avoids right-flank inflation
 
-axins2 = ax[1].inset_axes([0.38, 0.60, 0.22, 0.33])   # upper area, right of legend, up to ~60 % x
+axins2 = ax[1].inset_axes([0.3, 0.60, 0.3, 0.33])   # upper area, right of legend, up to ~60 % x
 axins2.plot(price_ratios, opex_milp_values,           color=C_MILP,     linewidth=1.8, linestyle="-",           marker="o", markersize=MS+0.5)
 axins2.plot(price_ratios, opex_lp_lower_values,       color=C_LP_LOWER, linewidth=1.5, linestyle=(0,(4,2)),     marker="s", markersize=MS+0.5)
 axins2.plot(price_ratios, opex_lp_upper_bo_values,    color=C_LP_UB_BO, linewidth=0.9, linestyle=(0,(5,3)),     alpha=0.6)

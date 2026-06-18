@@ -27,8 +27,8 @@ from pathlib import Path
 sys.path.insert(0, "Marius")
 
 import formulation_MILP as _milp
-import Marius.formulation_LP_approximated as _lp
-import Marius.formulation_LP_lower as _lp_bin
+import formulation_LP_approximated as _lp
+import formulation_LP_lower as _lp_bin
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -109,6 +109,15 @@ def run_regression() -> bool:
         print(f"ERROR: baseline file not found at {BASELINE_FILE}")
         print("Run with --generate first to create it.")
         return False
+
+    # Warn if the baseline was generated with a different MIP gap
+    with open(BASELINE_FILE) as _fh:
+        _info = json.load(_fh).get("info", {})
+    if _info.get("MILP_mip_gap") != MILP_MIP_GAP:
+        print(
+            f"WARNING: baseline MIP gap ({_info.get('MILP_mip_gap')}) differs from "
+            f"current ({MILP_MIP_GAP}). Consider re-running --generate."
+        )
 
     with open(BASELINE_FILE) as fh:
         baselines: dict = json.load(fh)

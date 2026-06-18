@@ -9,8 +9,10 @@ Conventions / modeling decisions (read these -- some affect the optimum):
   * Time index k in {0, ..., N-1}, i.e. N intervals of length dt. The state
     E_TES[k] is the storage content at the START of interval k. The cyclic
     constraint (VIII) E_TES(0) = E_TES(t_f) is enforced implicitly by wrapping
-    the dynamics recursion at k = N-1 back to k = 0 (modular indexing), so no
-    separate cyclic constraint is needed.
+    the dynamics recursion at k = N-1 back to k = 0 (modular indexing). The
+    initial condition (IX) E_TES(0) = E_TES_0 = 0 is enforced only when
+    ENFORCE_TES_INITIAL = True; by default the solver optimises over all
+    periodic trajectories without fixing the starting level.
   * cG, cel are the *uncertain* parameters in the PDF (sampled within ranges).
     Here they are single placeholder values -- SET THEM to your sample/midpoint
     or loop the build+solve over your samples.
@@ -49,6 +51,8 @@ E_nom_TES = 1000.0                    # [kWh]
 E_min_TES = 0.0                       # [kWh]
 Qin_min_TES = 0.0                     # [kW]
 Qout_min_TES = 0.0                    # [kW]
+E_TES_0 = 0.0                         # [kWh] initial TES state (PDF constraint IX)
+ENFORCE_TES_INITIAL = False           # set True to pin E_TES[0]=E_TES_0 (PDF constraint IX)
 
 # Boiler (identical units i in {1,2})
 Qout_nom_B = 530.0                    # [kW]
@@ -144,6 +148,11 @@ def solve(c_G: float, c_el: float, *, mip_gap: float = 1e-3, normalize: bool = F
     def tes_dynamics(m, k):
         k_next = (k + 1) % N                                # wrap-around enforces E_TES(0)=E_TES(tf)
         return m.E_TES[k_next] == a * m.E_TES[k] + b1 * m.Qin_TES[k] + b2 * m.Qout_TES[k]
+
+    if ENFORCE_TES_INITIAL:                                  # TES (IX) initial condition
+        @m.Constraint()
+        def tes_initial(m):
+            return m.E_TES[0] == E_TES_0
 
     @m.Constraint(m.K)                                      # TES (IV)
     def tes_charge_ub(m, k):
