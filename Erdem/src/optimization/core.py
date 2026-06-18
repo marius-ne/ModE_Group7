@@ -407,17 +407,17 @@ def extract_solver_solution(m: pyo.ConcreteModel) -> pd.DataFrame:
 def save_optimization_results(
     m: pyo.ConcreteModel,
     results: pyo.SolverFactory,
-    sample_id: str,
     optimization_type: str,
-    sampling_method: str
+    sampling_method: str,
+    sample_id: str,
 ) -> tuple[pd.DataFrame, dict]:
     """
     Extracts the solution and metadata from the optimization results and saves them to files.
     :param m: Pyomo ConcreteModel
     :param results: Pyomo SolverResults object
-    :param sample_id: String with the sample id as file name [(gas_price)_(elec_price)_(sample_index)]
     :param optimization_type: Type of optimization ("MILP", "LP_Relaxed", ...)
     :param sampling_method: String with the name of the sampling method (either "LHS" or "Sobol")
+    :param sample_id: String with the sample id as file name [(gas_price)_(elec_price)_(sample_index)]
     :return: Tuple of (solution DataFrame, metadata dictionary)
     """
     metadata = extract_solver_metadata(results, m)
@@ -449,20 +449,47 @@ def save_optimization_results(
 
 
 def load_optimization_results(
-    sample_id: str,
-    sampling_method: str,
     optimization_type: str,
+    sampling_method: str,
+    sample_id: str | int | None = None,
+    file_stem: str | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """
     Loads the optimization results saved as a pandas DataFrame and the metadata as a dictionary.
-    :param sample_id: String with the name of the optimization results file (without extension)
-    :param sampling_method: String with the name of the sampling method (either "LHS" or "Sobol")
     :param optimization_type: Type of optimization ("MILP", "LP_Relaxed", ...)
+    :param sampling_method: String with the name of the sampling method (either "LHS" or "Sobol")
+    :param sample_id: String or integer with the sample id [1, n_samples]
+    :param file_stem: String with the name of the optimization results file (without extension)
     :return: Tuple of (solution DataFrame, metadata dictionary)
     """
     # Results directory
     base_dir = RESULTS_DIR / optimization_type / sampling_method
-    file_stem = f"{optimization_type}_result_{sample_id}"
+
+    if not base_dir.exists():
+        raise FileNotFoundError(f"Results directory not found: {base_dir}")
+
+    # Exactly one selector should be provided
+    if (sample_id is None and file_stem is None) or (sample_id is not None and file_stem is not None):
+        raise ValueError("Provide exactly one of `sample_id` or `file_stem`.")
+
+    # Resolve file_stem
+    if file_stem is None:
+        sid = f"{int(sample_id):03d}"  # normalizes 5 -> "005"
+        candidates = sorted(base_dir.glob(f"{optimization_type}_result_*_{sid}.parquet"))
+
+        if len(candidates) == 0:
+            raise FileNotFoundError(
+                f"No result found for sample_id={sid} in {base_dir} "
+                f"(pattern: {optimization_type}_result_*_{sid}.parquet)"
+            )
+        if len(candidates) > 1:
+            names = ", ".join(p.stem for p in candidates)
+            raise ValueError(
+                f"sample_id={sid} is ambiguous. Multiple matches found: {names}. "
+                "Use `file_stem` for exact loading."
+            )
+
+        file_stem = candidates[0].stem
 
     # Define file paths
     parquet_path = base_dir / f"{file_stem}.parquet"

@@ -2,10 +2,14 @@
 from src.sampling.core import create_sample, save_samples, plot_samples
 
 if __name__ == "__main__":
-    sobol_df, sobol_quality = create_sample("sobol")
-    save_samples(sobol_df, sobol_quality, "sobol", "training")
+    # sobol_df, sobol_quality = create_sample("sobol")
+    # save_samples(sobol_df, sobol_quality, "sobol", "training")
+    #
+    # lhs_df, lhs_quality = create_sample("lhs")
+    # save_samples(lhs_df, lhs_quality, "lhs", "training")
 
-    lhs_df, lhs_quality = create_sample("lhs")
-    save_samples(lhs_df, lhs_quality, "lhs", "training")
+    log_df = create_sample("log")
+    save_samples(log_df, None, "log", "training")
 
-    plot_samples(sobol_df, sobol_quality, lhs_df, lhs_quality)
+    # plot_samples(sobol_df, sobol_quality, lhs_df, lhs_quality)
+    0

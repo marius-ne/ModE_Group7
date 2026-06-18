@@ -121,53 +121,72 @@ def print_summary(name, disc, min_dist):
 
 
 def save_samples(
-        df_samples: pd.DataFrame,
-        sample_quality: dict,
+        samples: pd.DataFrame | pd.Series,
+        sample_quality: dict | None,
         sampling_method: str,
         file_name: str
 ):
     """
-    Save the sampled points and their quality metrics to a parquet file
-    :param df_samples: DataFrame with columns "gas_price", "electricity_price", "point_type" and the corresponding values
+    Save the sampled points and their quality metrics to a parquet and JSON file or a csv file (for log)
+    :param samples: DataFrame or Series with columns "gas_price", "electricity_price", "point_type" and the corresponding values
     :param sample_quality: Dictionary of discrepancy and minimum pairwise distance
-    :param sampling_method: Name of the sampling method (either "lhs" or "sobol")
+    :param sampling_method: Name of the sampling method (either "lhs", "sobol", or "log)
     :param file_name: Name of the output file (without extension) to save the samples (either "training" or "test")
     """
     base_dir = RESULTS_DIR / "Sampling"
     base_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        sample_file = base_dir / f"{sampling_method}_{file_name}_samples.parquet"
-        df_samples.to_parquet(sample_file)
+        if sampling_method == "log":
+            # Save samples as csv for log
+            sample_file = base_dir / f"{sampling_method}_{file_name}_samples.csv"
+            samples.to_csv(sample_file, index=False, header=True, float_format="%.18g")
+            print(f"Saved {sampling_method} {file_name} samples to {sample_file}")
 
-        print(f"Saved {sampling_method} {file_name} samples to {sample_file}")
+        else:
+            # Save samples as parquet for Sobol and LHS
+            sample_file = base_dir / f"{sampling_method}_{file_name}_samples.parquet"
+            samples.to_parquet(sample_file)
+            print(f"Saved {sampling_method} {file_name} samples to {sample_file}")
 
-        quality_file = base_dir / f"{sampling_method}_{file_name}_quality.json"
-        with open(quality_file, "w") as f:
-            json.dump(sample_quality, f)
-        print(f"Saved {sampling_method} {file_name} sample quality metrics to {quality_file}")
+            # Save quality file as json
+            quality_file = base_dir / f"{sampling_method}_{file_name}_quality.json"
+            with open(quality_file, "w") as f:
+                json.dump(sample_quality, f)
+            print(f"Saved {sampling_method} {file_name} sample quality metrics to {quality_file}")
 
     except Exception as e:
         raise e
 
 
-def load_samples(sampling_method: str, file_name: str) -> tuple[pd.DataFrame, dict]:
+def load_samples(sampling_method: str, file_name: str) -> tuple[pd.DataFrame | pd.Series, dict | None]:
     """
     Load the sampled points and their quality metrics.
-    :param sampling_method: Name of the sampling method (either "lhs" or "sobol")
+    :param sampling_method: Name of the sampling method (either "lhs", "sobol" or "log")
     :param file_name: Name of the output file (without extension) to save the samples (either "training" or "test")
     :return: DataFrame with the sample points and a dictionary with the sample quality metrics
+    or just Series with the sample points
     """
     base_dir = RESULTS_DIR / "Sampling"
 
-    sample_file = base_dir / f"{sampling_method}_{file_name}_samples.parquet"
-    df_samples = pd.read_parquet(sample_file)
+    if sampling_method == "log":
+        sample_file = base_dir / f"{sampling_method}_{file_name}_samples.csv"
 
-    quality_file = base_dir / f"{sampling_method}_{file_name}_quality.json"
-    with open(quality_file, "r") as f:
-        dict_quality = json.load(f)
+        samples = pd.read_csv(sample_file)
+        dict_quality = None
 
-    return df_samples, dict_quality
+        return samples, dict_quality
+
+    else:
+        sample_file = base_dir / f"{sampling_method}_{file_name}_samples.parquet"
+        samples = pd.read_parquet(sample_file)
+
+        # Only load quality metrics for sobol/lhs
+        quality_file = base_dir / f"{sampling_method}_{file_name}_quality.json"
+        with open(quality_file, "r") as f:
+            dict_quality = json.load(f)
+
+        return samples, dict_quality
 
 
 # == Sampling function ===========================
@@ -176,7 +195,7 @@ def create_sample(
         n_samples: int = N_TOTAL,
         n_interior: int = N_INTERIOR,
         n_corner: int = N_CORNERS,
-) -> tuple[pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, dict] | pd.Series:
     """
     Create a sample set using the specified sampling method and return a DataFrame with the sampling points and a dictionary with quality metrics
     :param sampling_method: The sampling method to use ("sobol" or "lhs")
@@ -184,12 +203,27 @@ def create_sample(
     :param n_interior: Number of samples points in the interior of the price domain
     :param n_corner: Number of sample points on corners of the price domain
     :return: DataFrame with the sampling points and dictionary with quality metrics (discrepancy and minimum pairwise distance) of the sampling method
+    or just a Series with the sampling points
     """
     if sampling_method == "sobol":
         sampler = qmc.Sobol(d=2, scramble=True, seed=28)
 
     elif sampling_method == "lhs":
         sampler = qmc.LatinHypercube(d=2, scramble=True, optimization="random-cd", seed=28)
+
+    elif sampling_method == "log":
+        gas_prices = np.array([GAS_MIN, GAS_MAX])
+        electr_prices = np.array([ELEC_MIN, ELEC_MAX])
+
+        # Define all ratio combinations and filter min and max ratio
+        ratio_matrix = gas_prices[:, None] / electr_prices[None, :]
+        min_ratio = ratio_matrix.min()
+        max_ratio = ratio_matrix.max()
+
+        # Create evenly spaced sampling points on a log-scale
+        samples = np.logspace(np.log10(min_ratio), np.log10(max_ratio), N_TOTAL)
+
+        return pd.Series(samples, name="ratios")
 
     else:
         raise f"Sampling method {sampling_method} not supported. Choose either 'sobol' or 'lhs'."
@@ -207,7 +241,6 @@ def create_sample(
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-# == Visualization constants ======================
 COLORS = {"corner": "#D85A30", "edge_midpoint": "#BA7517", "interior": "#1D9E75"}
 MARKERS = {"corner": "D", "edge_midpoint": "s", "interior": "o"}
 SIZES = {"corner": 90, "edge_midpoint": 65, "interior": 35}
