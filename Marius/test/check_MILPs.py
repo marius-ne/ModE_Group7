@@ -1,20 +1,18 @@
 """
 Validates the normalized MILP formulation using two kinds of solver calls:
 
-  2-DOF grid:  solve(r*c_el, c_el)  for each (c_el, r) in C_EL_GRID x ratios
-  1-DOF norm:  solve(r*C_EL, C_EL, normalize=True, raw_normalized=True)
-               only at the single reference price C_EL  ->  OPEX / C_EL
+  2-DOF:    solve(r*c_el, c_el) for each (c_el, r) in C_EL_VALS × ratios.
+            All lines share the same ratio x-axis.
+  1-DOF:    solve(r*C_EL_REF, C_EL_REF, normalize=True, raw_normalized=True)
+            → widetilde{OPEX}(r)
 
-Subplot 1 — Normalized view (ratio on x)
-    OPEX(r*c_el, c_el) / c_el  for every c_el in C_EL_GRID should collapse
-    onto the single 1-DOF curve OPEX_raw(r), demonstrating that the problem
-    has only one degree of freedom.
+Subplot 1 — Normalized view
+    OPEX(r·c_el, c_el)/c_el  should collapse onto widetilde{OPEX}(r) for all c_el,
+    demonstrating the single-DOF structure.
 
-Subplot 2 — Original view (c_el x c_G plane)
-    Heatmap: OPEX reconstructed analytically as c_el * OPEX_raw(c_G/c_el).
-    Circles  (white edge): 2-DOF grid solves — multiple points per slope line.
-    Diamonds (red edge):   1-DOF normalized solves at c_el = C_EL.
-    If both match the heatmap colour at their location the equivalence holds.
+Subplot 2 — Homogeneity on constant-ratio slopes
+    Scatter of solved (c_el, c_G=r·c_el) points coloured by OPEX/c_el.
+    On every slope c_G/c_el = r the colour is constant, proving OPEX ∝ c_el.
 
 Usage:
     python Marius/test/check_MILPs.py
@@ -33,15 +31,16 @@ from formulation_MILP import solve
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-REWRITE  = False
-MIP_GAP  = 1e-2
-N_RATIOS    = 30
-C_EL        = 0.30                              # reference price for 1-DOF solves
-C_EL_GRID   = np.array([0.10, 0.20, 0.30, 0.50])  # c_el values for 2-DOF grid
-OUT_PATH    = Path("Marius/visualization/check_MILPs_comparison.png")
-CACHE_PATH  = Path("Marius/results/check_MILPs_cache.json")
-
-ratios = np.logspace(-1, 1, N_RATIOS)   # r = c_G / c_el  in [0.1, 10]
+REWRITE    = True
+MIP_GAP    = 1e-2
+N_CEL      = 6                                  # number of c_el values
+N_RATIOS   = 30                                 # shared ratio evaluation points
+C_EL_VALS  = np.linspace(0.10, 0.50, N_CEL)    # electricity prices
+C_EL_REF   = 0.30                              # reference c_el for 1-DOF solves
+ratios     = np.logspace(-1, 1, N_RATIOS)       # r = c_G/c_el in [0.1, 10]
+N_SLOPES   = 8                                  # slope lines shown in subplot 2
+OUT_PATH   = Path("Marius/visualization/check_MILPs_comparison.png")
+CACHE_PATH = Path("Marius/results/check_MILPs_cache.json")
 
 # ---------------------------------------------------------------------------
 # Solve or load from cache
@@ -50,197 +49,170 @@ if not REWRITE and CACHE_PATH.exists():
     print(f"Loading cached results from {CACHE_PATH}")
     with open(CACHE_PATH) as fh:
         cache = json.load(fh)
-    ratios         = np.array(cache["ratios"])
-    C_EL_GRID      = np.array(cache["C_EL_GRID"])
-    C_EL           = float(cache["C_EL"])
-    opex_2dof_grid = np.array(cache["opex_2dof_grid"])  # (len(C_EL_GRID), N_RATIOS)
-    opex_raw       = np.array(cache["opex_raw"])         # (N_RATIOS,)
+    C_EL_VALS = np.array(cache["C_EL_VALS"])
+    C_EL_REF  = float(cache["C_EL_REF"])
+    ratios    = np.array(cache["ratios"])
+    opex_grid = np.array(cache["opex_grid"])   # (N_CEL, N_RATIOS)
+    opex_raw  = np.array(cache["opex_raw"])    # (N_RATIOS,)
 else:
-    n_total = len(C_EL_GRID) * N_RATIOS + N_RATIOS
-    done = 0
+    n_total = len(C_EL_VALS) * N_RATIOS + N_RATIOS
+    done    = 0
 
-    opex_2dof_grid = np.empty((len(C_EL_GRID), N_RATIOS))
-    opex_raw       = np.empty(N_RATIOS)
+    opex_grid = np.empty((len(C_EL_VALS), N_RATIOS))
+    opex_raw  = np.empty(N_RATIOS)
 
-    # 2-DOF grid
-    for i, c_el_i in enumerate(C_EL_GRID):
+    for i, c_el_i in enumerate(C_EL_VALS):
         for j, r in enumerate(ratios):
             done += 1
             c_G = r * c_el_i
             print(f"[{done:3d}/{n_total}] 2-DOF  c_el={c_el_i:.2f}  r={r:.4f}  c_G={c_G:.4f}")
-            opex_2dof_grid[i, j] = solve(c_G, c_el_i, mip_gap=MIP_GAP)[0]
+            opex_grid[i, j] = solve(c_G, c_el_i, mip_gap=MIP_GAP)[0]
 
-    # 1-DOF normalized — only at C_EL
     for j, r in enumerate(ratios):
         done += 1
-        c_G = r * C_EL
-        print(f"[{done:3d}/{n_total}] 1-DOF  c_el={C_EL:.2f}  r={r:.4f}  c_G={c_G:.4f}")
-        opex_raw[j] = solve(c_G, C_EL, mip_gap=MIP_GAP,
+        c_G = r * C_EL_REF
+        print(f"[{done:3d}/{n_total}] 1-DOF  c_el={C_EL_REF:.2f}  r={r:.4f}  c_G={c_G:.4f}")
+        opex_raw[j] = solve(c_G, C_EL_REF, mip_gap=MIP_GAP,
                             normalize=True, raw_normalized=True)[0]
 
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CACHE_PATH, "w") as fh:
         json.dump({
-            "C_EL": C_EL,
-            "C_EL_GRID": C_EL_GRID.tolist(),
-            "ratios": ratios.tolist(),
-            "opex_2dof_grid": opex_2dof_grid.tolist(),
-            "opex_raw": opex_raw.tolist(),
+            "C_EL_VALS": C_EL_VALS.tolist(),
+            "C_EL_REF":  C_EL_REF,
+            "ratios":    ratios.tolist(),
+            "opex_grid": opex_grid.tolist(),
+            "opex_raw":  opex_raw.tolist(),
         }, fh, indent=2)
     print(f"Cached to {CACHE_PATH}")
 
-# ---------------------------------------------------------------------------
-# Build heatmap analytically (no extra solver calls)
-# ---------------------------------------------------------------------------
-N_GRID   = 300
-c_el_arr = np.linspace(0.05, 0.60, N_GRID)   # linear x-axis
-c_G_arr  = np.linspace(0.01, 5.00, N_GRID)   # linear y-axis
-CEL_mesh, CG_mesh = np.meshgrid(c_el_arr, c_G_arr)
-ratio_mesh = CG_mesh / CEL_mesh
+N_CEL     = len(C_EL_VALS)
+opex_norm = opex_grid / C_EL_VALS[:, np.newaxis]   # OPEX / c_el; should = opex_raw for all rows
 
-log_r_sweep  = np.log(ratios)
-log_raw_vals = np.log(opex_raw)
-log_r_clipped = np.log(np.clip(ratio_mesh, ratios[0], ratios[-1]))
-OPEX_mesh = CEL_mesh * np.exp(np.interp(log_r_clipped, log_r_sweep, log_raw_vals))
-OPEX_mesh = np.where(
-    (ratio_mesh >= ratios[0]) & (ratio_mesh <= ratios[-1]),
-    OPEX_mesh, np.nan,
-)
+# ---------------------------------------------------------------------------
+# Helper: tight inset y-bounds
+# ---------------------------------------------------------------------------
+def _inset_y_bounds(series, x_lo, x_hi, pad_lo=0.996, pad_hi=1.004):
+    """
+    Tight (y_lo, y_hi) for an inset on x ∈ [x_lo, x_hi].
+    Strict inner indices → ceiling; left-expanded by one neighbor → floor.
+    """
+    y_for_max, y_for_min = [], []
+    for x_arr, y_arr in series:
+        x_arr = np.asarray(x_arr, float)
+        y_arr = np.asarray(y_arr, float)
+        inner = np.where((x_arr >= x_lo) & (x_arr <= x_hi))[0]
+        if len(inner) == 0:
+            continue
+        y_for_max.extend(y_arr[inner].tolist())
+        exp_lo = max(0, inner[0] - 1)
+        exp_hi = min(len(x_arr) - 1, inner[-1] + 1)
+        y_for_min.extend(y_arr[exp_lo:exp_hi + 1].tolist())
+    arr_max = np.array([v for v in y_for_max if np.isfinite(v)])
+    arr_min = np.array([v for v in y_for_min if np.isfinite(v)])
+    return arr_min.min() * pad_lo, arr_max.max() * pad_hi
 
-vmin = np.nanmin(OPEX_mesh)
-vmax = np.nanmax(OPEX_mesh)
-log_norm = mcolors.LogNorm(vmin=vmin, vmax=vmax)
 
 # ---------------------------------------------------------------------------
 # Figure
 # ---------------------------------------------------------------------------
-LEGEND_KW = dict(framealpha=0.85, edgecolor="gray", fontsize=8)
-fig, (ax1, ax2) = plt.subplots(
-    1, 2, figsize=(14, 6),
-    gridspec_kw={"width_ratios": [1, 1.45]},
-)
+LEGEND_KW   = dict(framealpha=0.85, edgecolor="gray", fontsize=8)
+c_el_colors = plt.cm.Blues(np.linspace(0.40, 0.90, N_CEL))
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6),
+                                gridspec_kw={"width_ratios": [1, 1.1]})
 
 # ------------------------------------------------------------------ Subplot 1
-# Show OPEX/c_el vs ratio for every c_el in C_EL_GRID — they should
-# collapse onto the single 1-DOF reference curve opex_raw.
-
-c_el_colors = plt.cm.Blues(np.linspace(0.45, 0.90, len(C_EL_GRID)))
-
-def _plot_sp1(ax, ratios, opex_2dof_grid, opex_raw, C_EL_GRID, c_el_colors,
-              MIP_GAP, with_legend=False):
-    """Draw the subplot-1 content on *ax* (used for main axes and inset)."""
+def _plot_sp1(ax, with_legend=False):
     ax.fill_between(
         ratios,
         opex_raw * (1 - MIP_GAP),
         opex_raw * (1 + MIP_GAP),
         color="gray", alpha=0.35, zorder=1,
-        label=f"±{MIP_GAP:.0%} MIP-gap band",
+        label=f"±{MIP_GAP:.0%} MIP-gap band" if with_legend else None,
     )
-    for i, c_el_i in enumerate(C_EL_GRID):
-        ax.plot(ratios, opex_2dof_grid[i, :] / c_el_i,
+    for i, c_el_i in enumerate(C_EL_VALS):
+        ax.plot(ratios, opex_norm[i, :],
                 color=c_el_colors[i], marker="o", markersize=3, zorder=3,
-                label=f"2-DOF / $c_{{\\rm el}}$  ($c_{{\\rm el}}={c_el_i}$)" if with_legend else None)
+                label=f"2-DOF  $c_{{\\rm el}}={c_el_i:.2f}$" if with_legend else None)
     ax.plot(ratios, opex_raw, color="black", marker="s", markersize=3,
             linestyle="--", zorder=4,
-            label=r"1-DOF: $\mathrm{OPEX}_{\rm raw}(r)$" if with_legend else None)
+            label=r"1-DOF: $\widetilde{\mathrm{OPEX}}(r)$" if with_legend else None)
 
-_plot_sp1(ax1, ratios, opex_2dof_grid, opex_raw, C_EL_GRID, c_el_colors,
-          MIP_GAP, with_legend=True)
 
+_plot_sp1(ax1, with_legend=True)
 ax1.set_xscale("log")
 ax1.set_yscale("log")
 ax1.set_xlabel(r"Price ratio $r = c_G / c_{\rm el}$", fontsize=11)
-ax1.set_ylabel(r"OPEX / $c_{\rm el}$  [kWh]", fontsize=11)
+ax1.set_ylabel(r"$\widetilde{\mathrm{OPEX}}$ [kWh]", fontsize=11)
 ax1.set_title(
     "Subplot 1 — Normalized view\n"
-    r"2-DOF lines $\mathrm{OPEX}(r \cdot c_{\rm el},\,c_{\rm el})/c_{\rm el}$"
-    " collapse onto 1-DOF",
+    r"$\mathrm{OPEX}(r\,c_{\rm el},\,c_{\rm el})\,/\,c_{\rm el}"
+    r"= \widetilde{\mathrm{OPEX}}(r)$  for all $c_{\rm el}$",
     fontsize=10,
 )
 ax1.legend(**LEGEND_KW)
 ax1.grid(True, which="both", ls="--", alpha=0.6)
 
-# Inset: zoom into a narrow x-window around r≈1 so the ±1 % band is legible.
+# Inset: zoom r ∈ [0.75, 1.35] — all series share ratios as x-axis
 ZOOM_LO, ZOOM_HI = 0.75, 1.35
-# Center y-limits on opex_raw at r≈1 with a fixed half-width of 1.5×MIP_GAP
-# so the ±1% band fills ~67% of the inset height regardless of data spread.
-idx_center = np.argmin(np.abs(ratios - 1.0))
-opex_center = opex_raw[idx_center]
-ZOOM_Y_HALF = 1.5 * MIP_GAP
-y_lo = opex_center * (1 - ZOOM_Y_HALF)
-y_hi = opex_center * (1 + ZOOM_Y_HALF)
+_sp1_series = [(ratios, opex_norm[i, :]) for i in range(N_CEL)]
+_sp1_series.append((ratios, opex_raw))
+_ins_y_lo, _ins_y_hi = _inset_y_bounds(_sp1_series, ZOOM_LO, ZOOM_HI)
 
-axins = ax1.inset_axes([0.53, 0.04, 0.44, 0.40])   # lower-right corner
-_plot_sp1(axins, ratios, opex_2dof_grid, opex_raw, C_EL_GRID, c_el_colors,
-          MIP_GAP, with_legend=False)
+axins = ax1.inset_axes([0.53, 0.04, 0.44, 0.40])
+_plot_sp1(axins, with_legend=False)
 axins.set_yscale("log")
 axins.set_xlim(ZOOM_LO, ZOOM_HI)
-axins.set_ylim(y_lo, y_hi)
+axins.set_ylim(_ins_y_lo, _ins_y_hi)
 axins.tick_params(labelsize=7)
 axins.set_xlabel(r"$r$", fontsize=8, labelpad=1)
-axins.set_ylabel(r"OPEX/$c_{\rm el}$", fontsize=8, labelpad=1)
+axins.set_ylabel(r"$\widetilde{\mathrm{OPEX}}$", fontsize=8, labelpad=1)
 axins.grid(True, which="both", ls="--", alpha=0.5)
-axins.set_title(f"Zoom r∈[{ZOOM_LO},{ZOOM_HI}]", fontsize=8, pad=3)
+axins.set_title(f"Zoom $r\\in[{ZOOM_LO},{ZOOM_HI}]$", fontsize=8, pad=3)
 ax1.indicate_inset_zoom(axins, edgecolor="0.4")
 
 # ------------------------------------------------------------------ Subplot 2
+# Scatter (c_el, c_G = r·c_el) coloured by OPEX/c_el = widetilde{OPEX}.
+# On each slope c_G/c_el = r the colour must be constant (OPEX ∝ c_el).
+
+CEL_pts  = np.repeat(C_EL_VALS, N_RATIOS)
+CG_pts   = (C_EL_VALS[:, None] * ratios[None, :]).ravel()
+norm_pts = opex_norm.ravel()
+
+log_norm_sp2 = mcolors.LogNorm(vmin=norm_pts.min(), vmax=norm_pts.max())
 cmap = plt.cm.plasma.copy()
-cmap.set_bad(color="#dddddd")
 
-pcm = ax2.pcolormesh(
-    CEL_mesh, CG_mesh, OPEX_mesh,
-    norm=log_norm, cmap=cmap, shading="auto",
+pcm = ax2.scatter(
+    CEL_pts, CG_pts,
+    c=norm_pts, norm=log_norm_sp2, cmap=cmap,
+    marker="o", edgecolors="white", linewidths=0.5, s=55, zorder=5,
 )
-fig.colorbar(pcm, ax=ax2, label="OPEX [€]", pad=0.02)
+fig.colorbar(pcm, ax=ax2, label=r"$\widetilde{\mathrm{OPEX}}$ [kWh]", pad=0.02)
 
-# Constant-ratio slope lines (linear axes → straight lines)
-n_lines = 8
-slope_idx = np.round(np.linspace(0, N_RATIOS - 1, n_lines)).astype(int)
+# Constant-ratio slope lines c_G = r · c_el
+slope_idx = np.round(np.linspace(0, N_RATIOS - 1, N_SLOPES)).astype(int)
+c_el_lo, c_el_hi = C_EL_VALS[0], C_EL_VALS[-1]
 for idx in slope_idx:
     r_sel = ratios[idx]
-    c_G_line = r_sel * c_el_arr
-    in_domain = (c_G_line >= c_G_arr[0]) & (c_G_line <= c_G_arr[-1])
-    if in_domain.any():
-        ax2.plot(c_el_arr[in_domain], c_G_line[in_domain],
-                 color="white", lw=0.9, alpha=0.75, zorder=3)
-        ax2.text(c_el_arr[in_domain][-1] * 0.99, c_G_line[in_domain][-1],
-                 f"r={r_sel:.2f}", color="white", fontsize=7.5,
-                 ha="right", va="center", zorder=4)
+    ax2.plot([c_el_lo, c_el_hi],
+             [r_sel * c_el_lo, r_sel * c_el_hi],
+             color="white", lw=1.0, alpha=0.8, zorder=3)
+    ax2.text(c_el_hi * 1.01, r_sel * c_el_hi,
+             f"$r={r_sel:.2f}$", color="white", fontsize=7,
+             ha="left", va="center", zorder=4)
 
-# 2-DOF grid — circles with white edge
-for i, c_el_i in enumerate(C_EL_GRID):
-    c_G_vals = ratios * c_el_i
-    in_view = (c_G_vals >= c_G_arr[0]) & (c_G_vals <= c_G_arr[-1])
-    ax2.scatter(
-        np.full(in_view.sum(), c_el_i), c_G_vals[in_view],
-        c=opex_2dof_grid[i, in_view], norm=log_norm, cmap=cmap,
-        marker="o", edgecolors="white", linewidths=0.7, s=45, zorder=5,
-    )
-
-# 1-DOF normalized — diamonds with red edge (visually distinct)
-solved_c_G = ratios * C_EL
-in_norm = (solved_c_G >= c_G_arr[0]) & (solved_c_G <= c_G_arr[-1])
-ax2.axvline(C_EL, color="white", lw=1.2, ls="--", alpha=0.8, zorder=4)
-ax2.scatter(
-    np.full(in_norm.sum(), C_EL), solved_c_G[in_norm],
-    c=(opex_raw * C_EL)[in_norm], norm=log_norm, cmap=cmap,
-    marker="D", edgecolors="red", linewidths=1.1, s=60, zorder=6,
-)
-
-# Legend proxy artists
-ax2.scatter([], [], marker="o", edgecolors="white", linewidths=0.7, s=45,
-            color="gray", label="2-DOF grid (circles)")
-ax2.scatter([], [], marker="D", edgecolors="red", linewidths=1.1, s=60,
-            color="gray", label=f"1-DOF normalized, $c_{{\\rm el}}={C_EL}$ (diamonds)")
-
+ax2.set_xlim(c_el_lo * 0.9, c_el_hi * 1.12)
+ax2.set_ylim(ratios[0] * c_el_lo * 0.9,
+             ratios[-1] * c_el_hi * 1.05)
 ax2.set_xlabel(r"$c_{\rm el}$ [€/kWh]", fontsize=11)
 ax2.set_ylabel(r"$c_G$ [€/kWh]", fontsize=11)
 ax2.set_title(
-    "Subplot 2 — Original view\n"
-    "Heatmap from 1-DOF; dots coloured by actual OPEX — match = equivalence",
+    r"Subplot 2 — Homogeneity: colour $= \widetilde{\mathrm{OPEX}} = \mathrm{OPEX}\,/\,c_{\rm el}$"
+    "\nConstant colour on each slope "
+    r"$\Rightarrow\;\mathrm{OPEX}(r\,c_{\rm el},c_{\rm el})\propto c_{\rm el}$",
     fontsize=10,
 )
-ax2.legend(**LEGEND_KW)
 
 plt.tight_layout()
 OUT_PATH.parent.mkdir(parents=True, exist_ok=True)

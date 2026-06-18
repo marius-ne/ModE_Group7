@@ -176,7 +176,23 @@ ax[1].plot(price_ratios, opex_lp_approx_mean_values, color=C_LP_APPROX, linewidt
 ax[1].set_xscale("log")
 ax[1].set_yscale("log")
 ax[1].set_ylabel(OPEX_YLABEL, fontsize=12)
-ax[1].set_title("OPEX vs Price Ratio — log scale")
+
+_gap_mask   = (np.isfinite(opex_milp_values) & np.isfinite(opex_lp_lower_values)
+               & np.isfinite(opex_lp_upper_min_values) & (opex_milp_values > 0))
+_r_masked   = price_ratios[_gap_mask]
+_milp_m     = opex_milp_values[_gap_mask]
+_lower_gaps = (_milp_m - opex_lp_lower_values[_gap_mask]) / _milp_m
+_upper_gaps = (opex_lp_upper_min_values[_gap_mask] - _milp_m) / _milp_m
+_wi_lo, _wi_up = np.argmax(_lower_gaps), np.argmax(_upper_gaps)
+_gap_subtitle = (
+    f"mean $\\Delta$: LP lower: {_lower_gaps.mean():.2%}  |  LP upper: {_upper_gaps.mean():.2%}"
+    f"     —     "
+    f"worst $\\Delta$: LP lower: {_lower_gaps[_wi_lo]:.2%} at $r={_r_masked[_wi_lo]:.3f}$"
+    f"  |  LP upper: {_upper_gaps[_wi_up]:.2%} at $r={_r_masked[_wi_up]:.3f}$"
+)
+ax[1].set_title("OPEX vs Price Ratio — log scale", fontsize=11, pad=13)
+ax[1].text(0.5, 1.0, _gap_subtitle, transform=ax[1].transAxes,
+           ha="center", va="bottom", fontsize=8.5)
 ax[1].legend(**LEGEND_KW)
 ax[1].grid(True, which="both", ls="--", alpha=0.5)
 
