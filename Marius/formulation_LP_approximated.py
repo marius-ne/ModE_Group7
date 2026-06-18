@@ -78,7 +78,7 @@ N = len(_df)                          # number of intervals (= 168 for tf = 168 
 # ---------------------------------------------------------------------------
 # 4. Callable solve function
 # ---------------------------------------------------------------------------
-def solve(c_G: float, c_el: float, *, tee: bool = False) -> tuple[float, pd.DataFrame]:
+def solve(c_G: float, c_el: float, *, strict_demand_satisfaction: bool = True, tee: bool = False) -> tuple[float, pd.DataFrame]:
     """Build and solve the LP dispatch model. Returns (opex, dispatch_df)."""
     m = ConcreteModel("ModE_P5_TES_dispatch_LP")
 
@@ -145,19 +145,21 @@ def solve(c_G: float, c_el: float, *, tee: bool = False) -> tuple[float, pd.Data
     def chp_power(m, i, k):
         return m.Pout_CHP[i, k] == m_CHP_el * m.Qin_CHP[i, k]
 
+    _op = (lambda a, b: a == b) if strict_demand_satisfaction else (lambda a, b: a >= b)
+
     # --- Balances ---
     @m.Constraint(m.K)
     def heat_balance(m, k):
-        return (
+        return _op(
             sum(m.Qout_CHP[i, k] for i in m.CHP)
             + sum(m.Qout_B[i, k] for i in m.B)
-            + m.Qout_TES[k] - m.Qin_TES[k]
-            == m.Q_D[k]
+            + m.Qout_TES[k] - m.Qin_TES[k],
+            m.Q_D[k],
         )
 
     @m.Constraint(m.K)
     def power_balance(m, k):
-        return sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k] == m.P_D[k]
+        return _op(sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k], m.P_D[k])
 
     # ---------------------------------------------------------------------------
     # 6. Objective
@@ -198,7 +200,7 @@ def solve(c_G: float, c_el: float, *, tee: bool = False) -> tuple[float, pd.Data
 
 def plot_dispatch_results(
     dispatch: pd.DataFrame,
-    output_path: str = "Marius/visualization/dispatch_overview_LP.png",
+    output_path: str = "Marius/visualization/dispatch_overview_LP_approximated.png",
     gas_price: float | None = None,
     el_price: float | None = None,
     opex: float | None = None,
@@ -325,8 +327,8 @@ if __name__ == "__main__":
     print("\nSolver status: done")
     print(f"Total cost    : {opex:.2f}")
 
-    dispatch.to_csv("Marius/results/dispatch_result_LP.csv", index=False)
-    print("Dispatch written to Marius/results/dispatch_result_LP.csv")
+    dispatch.to_csv("Marius/results/dispatch_result_LP_approximated.csv", index=False)
+    print("Dispatch written to Marius/results/dispatch_result_LP_approximated.csv")
 
     plot_dispatch_results(dispatch, gas_price=_cG, el_price=_cel, opex=opex, fontsize=18)
-    print("Dispatch visualization written to Marius/visualization/dispatch_overview_LP.png")
+    print("Dispatch visualization written to Marius/visualization/dispatch_overview_LP_approximated.png")

@@ -9,7 +9,7 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 
 from formulation_MILP import plot_dispatch_results as plot_dispatch_results_milp
-from formulation_LP import plot_dispatch_results as plot_dispatch_results_lp
+from Marius.formulation_LP_approximated import plot_dispatch_results as plot_dispatch_results_lp
 
 
 QOUT_NOM_B = 530.0

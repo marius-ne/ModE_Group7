@@ -27,8 +27,8 @@ from pathlib import Path
 sys.path.insert(0, "Marius")
 
 import formulation_MILP as _milp
-import formulation_LP as _lp
-import formulation_LP_binary as _lp_bin
+import Marius.formulation_LP_approximated as _lp
+import Marius.formulation_LP_lower as _lp_bin
 
 # ---------------------------------------------------------------------------
 # Configuration
