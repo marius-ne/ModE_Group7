@@ -59,6 +59,13 @@ m_B_heat = 0.8078
 m_CHP_heat = 0.3948
 m_CHP_el = 0.2980
 
+# Mean-efficiency slopes: average of the efficiency at minimum and maximum load
+# within the lambda operating region. Computed analytically from the parameters above.
+_Qin_CHP_min = lam_in_min_CHP * Pout_nom_CHP / eta_nom_CHP_el
+m_B_heat_mean   = ((lam_out_min_B * eta_nom_B / lam_in_min_B) + eta_nom_B) / 2
+m_CHP_heat_mean = ((lam_out_min_CHP_th * Qout_nom_CHP / _Qin_CHP_min) + eta_nom_CHP_th) / 2
+m_CHP_el_mean   = ((lam_out_min_CHP_el * Pout_nom_CHP / _Qin_CHP_min) + eta_nom_CHP_el) / 2
+
 # ---------------------------------------------------------------------------
 # 2. Exact discretization of the TES ODE  (section 1.1)
 # ---------------------------------------------------------------------------
@@ -78,8 +85,30 @@ N = len(_df)                          # number of intervals (= 168 for tf = 168 
 # ---------------------------------------------------------------------------
 # 4. Callable solve function
 # ---------------------------------------------------------------------------
-def solve(c_G: float, c_el: float, *, strict_demand_satisfaction: bool = True, tee: bool = False) -> tuple[float, pd.DataFrame]:
-    """Build and solve the LP dispatch model. Returns (opex, dispatch_df)."""
+def solve(
+    c_G: float,
+    c_el: float,
+    *,
+    mode: str = "fitted",
+    strict_demand_satisfaction: bool = True,
+    tee: bool = False,
+) -> tuple[float, pd.DataFrame]:
+    """Build and solve the LP dispatch model. Returns (opex, dispatch_df).
+
+    mode: "fitted"          -- use MSE-fitted linearization slopes
+          "mean_efficiency" -- use mean of min/max efficiency within lambda region
+    """
+    if mode not in ("fitted", "mean_efficiency"):
+        raise ValueError("mode must be 'fitted' or 'mean_efficiency'")
+
+    if mode == "mean_efficiency":
+        slope_B    = m_B_heat_mean
+        slope_Q    = m_CHP_heat_mean
+        slope_P    = m_CHP_el_mean
+    else:
+        slope_B    = m_B_heat
+        slope_Q    = m_CHP_heat
+        slope_P    = m_CHP_el
     m = ConcreteModel("ModE_P5_TES_dispatch_LP")
 
     m.K = RangeSet(0, N - 1)             # time intervals
@@ -134,16 +163,16 @@ def solve(c_G: float, c_el: float, *, strict_demand_satisfaction: bool = True, t
     # --- Boilers: linearized heat output ---
     @m.Constraint(m.B, m.K)
     def boiler_output(m, i, k):
-        return m.Qout_B[i, k] == m_B_heat * m.Qin_B[i, k]
+        return m.Qout_B[i, k] == slope_B * m.Qin_B[i, k]
 
     # --- CHPs: linearized heat and electricity outputs ---
     @m.Constraint(m.CHP, m.K)
     def chp_heat(m, i, k):
-        return m.Qout_CHP[i, k] == m_CHP_heat * m.Qin_CHP[i, k]
+        return m.Qout_CHP[i, k] == slope_Q * m.Qin_CHP[i, k]
 
     @m.Constraint(m.CHP, m.K)
     def chp_power(m, i, k):
-        return m.Pout_CHP[i, k] == m_CHP_el * m.Qin_CHP[i, k]
+        return m.Pout_CHP[i, k] == slope_P * m.Qin_CHP[i, k]
 
     _op = (lambda a, b: a == b) if strict_demand_satisfaction else (lambda a, b: a >= b)
 

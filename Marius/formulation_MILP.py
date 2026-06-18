@@ -89,12 +89,14 @@ N = len(_df)                          # number of intervals (= 168 for tf = 168 
 # ---------------------------------------------------------------------------
 # 4. Callable solve function
 # ---------------------------------------------------------------------------
-def solve(c_G: float, c_el: float, *, mip_gap: float = 1e-3, normalize: bool = False, strict_demand_satisfaction: bool = True, tee: bool = False) -> tuple[float, pd.DataFrame]:
+def solve(c_G: float, c_el: float, *, mip_gap: float = 1e-3, normalize: bool = False, raw_normalized: bool = False, strict_demand_satisfaction: bool = True, tee: bool = False) -> tuple[float, pd.DataFrame]:
     """Build and solve the MILP dispatch model. Returns (opex, dispatch_df).
 
     normalize=True divides the objective by c_el so the solver only sees the
-    ratio c_G/c_el (better numerical scaling). The returned opex is always in
-    original currency units regardless of this flag.
+    ratio c_G/c_el (better numerical scaling).
+
+    raw_normalized=True (only meaningful when normalize=True) returns the raw
+    normalized objective value OPEX/c_el instead of post-multiplying by c_el.
     """
     m = ConcreteModel("ModE_P5_TES_dispatch")
 
@@ -235,7 +237,10 @@ def solve(c_G: float, c_el: float, *, mip_gap: float = 1e-3, normalize: bool = F
     solver.options["TimeLimit"] = 300
     solver.solve(m, tee=tee)
 
-    opex = (c_el * value(m.total_cost)) if normalize else value(m.total_cost)
+    if normalize:
+        opex = value(m.total_cost) if raw_normalized else c_el * value(m.total_cost)
+    else:
+        opex = value(m.total_cost)
 
     rows = []
     for k in m.K:
