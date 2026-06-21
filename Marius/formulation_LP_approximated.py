@@ -165,6 +165,10 @@ def solve(
     def boiler_output(m, i, k):
         return m.Qout_B[i, k] == slope_B * m.Qin_B[i, k]
 
+    @m.Constraint(m.B, m.K)                                 # Boiler (II): fuel upper bound
+    def boiler_fuel_ub(m, i, k):
+        return m.Qin_B[i, k] <= Qout_nom_B / eta_nom_B
+
     # --- CHPs: linearized heat and electricity outputs ---
     @m.Constraint(m.CHP, m.K)
     def chp_heat(m, i, k):
@@ -173,6 +177,10 @@ def solve(
     @m.Constraint(m.CHP, m.K)
     def chp_power(m, i, k):
         return m.Pout_CHP[i, k] == slope_P * m.Qin_CHP[i, k]
+
+    @m.Constraint(m.CHP, m.K)                               # CHP (III): fuel upper bound (thermal basis)
+    def chp_fuel_ub(m, i, k):
+        return m.Qin_CHP[i, k] <= Qout_nom_CHP / eta_nom_CHP_th
 
     _op = (lambda a, b: a == b) if strict_demand_satisfaction else (lambda a, b: a >= b)
 
