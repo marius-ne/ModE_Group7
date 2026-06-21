@@ -1,12 +1,26 @@
 """
-ModE Project 5 -- LP operational dispatch of a district energy system
+ModE Project 5 -- MILP operational dispatch of a district energy system
 (2 boilers + 2 CHPs + thermal energy storage), exact ZOH discretization.
 
-This file mirrors formulation_MILP.py but removes the binary commitment variables
-and replaces the boiler/CHP part-load equations with the linearized models
-obtained from the notebook-based MSE fit.
+Implements the sparse problem formulation from `problem_formulation_Marius.pdf`
+in Pyomo and solves it with Gurobi.
 
-The result is a pure LP.
+Conventions / modeling decisions (read these -- some affect the optimum):
+  * Time index k in {0, ..., N-1}, i.e. N intervals of length dt. The state
+    E_TES[k] is the storage content at the START of interval k. The cyclic
+    constraint (VIII) E_TES(0) = E_TES(t_f) is enforced implicitly by wrapping
+    the dynamics recursion at k = N-1 back to k = 0 (modular indexing). The
+    initial condition (IX) E_TES(0) = E_TES_0 = 0 is enforced only when
+    ENFORCE_TES_INITIAL = True; by default the solver optimises over all
+    periodic trajectories without fixing the starting level.
+  * cG, cel are the *uncertain* parameters in the PDF (sampled within ranges).
+    Here they are single placeholder values -- SET THEM to your sample/midpoint
+    or loop the build+solve over your samples.
+  * Pgrid is import-only (NonNegativeReals): the power balance is an exact
+    equality and the grid covers the deficit, so the CHPs can never produce
+    more electricity than P_D at any step (no export). Set PGRID_DOMAIN = Reals
+    to allow export (Pgrid < 0).
+  * The heat/power balances (Demand I/II) are equalities, exactly as written.
 """
 
 import numpy as np
@@ -15,7 +29,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from pyomo.environ import (
     ConcreteModel, Set, RangeSet, Param, Var, Expression, Objective, Constraint,
-    Reals, NonNegativeReals, SolverFactory, value, minimize,
+    Reals, NonNegativeReals, Binary, SolverFactory, value, minimize,
 )
 
 # ---------------------------------------------------------------------------
@@ -37,6 +51,8 @@ E_nom_TES = 1000.0                    # [kWh]
 E_min_TES = 0.0                       # [kWh]
 Qin_min_TES = 0.0                     # [kW]
 Qout_min_TES = 0.0                    # [kW]
+E_TES_0 = 0.0                         # [kWh] initial TES state (PDF constraint IX)
+ENFORCE_TES_INITIAL = False           # set True to pin E_TES[0]=E_TES_0 (PDF constraint IX)
 
 # Boiler (identical units i in {1,2})
 Qout_nom_B = 530.0                    # [kW]
@@ -53,18 +69,10 @@ lam_in_min_CHP = 0.582                # [-]  shared minimal fuel load (th = el)
 lam_out_min_CHP_th = 0.622            # [-]
 lam_out_min_CHP_el = 0.5             # [-]
 
-# Linearizations obtained from the optimization-based notebook fit.
-# Model: OUT = m * IN
-m_B_heat = 0.8078
-m_CHP_heat = 0.3948
-m_CHP_el = 0.2980
-
-# Mean-efficiency slopes: average of the efficiency at minimum and maximum load
-# within the lambda operating region. Computed analytically from the parameters above.
-_Qin_CHP_min = lam_in_min_CHP * Pout_nom_CHP / eta_nom_CHP_el
-m_B_heat_mean   = ((lam_out_min_B * eta_nom_B / lam_in_min_B) + eta_nom_B) / 2
-m_CHP_heat_mean = ((lam_out_min_CHP_th * Qout_nom_CHP / _Qin_CHP_min) + eta_nom_CHP_th) / 2
-m_CHP_el_mean   = ((lam_out_min_CHP_el * Pout_nom_CHP / _Qin_CHP_min) + eta_nom_CHP_el) / 2
+# Part-load slopes  beta_j = (1 - lam_in_min) / (1 - lam_out_min)
+beta_B = (1.0 - lam_in_min_B) / (1.0 - lam_out_min_B)
+beta_CHP_th = (1.0 - lam_in_min_CHP) / (1.0 - lam_out_min_CHP_th)
+beta_CHP_el = (1.0 - lam_in_min_CHP) / (1.0 - lam_out_min_CHP_el)
 
 # ---------------------------------------------------------------------------
 # 2. Exact discretization of the TES ODE  (section 1.1)
@@ -85,31 +93,16 @@ N = len(_df)                          # number of intervals (= 168 for tf = 168 
 # ---------------------------------------------------------------------------
 # 4. Callable solve function
 # ---------------------------------------------------------------------------
-def solve(
-    c_G: float,
-    c_el: float,
-    *,
-    mode: str = "mean_efficiency",
-    strict_demand_satisfaction: bool = True,
-    tee: bool = False,
-) -> tuple[float, pd.DataFrame]:
-    """Build and solve the LP dispatch model. Returns (opex, dispatch_df).
+def solve(c_G: float, c_el: float, *, mip_gap: float = 1e-3, normalize: bool = False, raw_normalized: bool = False, strict_demand_satisfaction: bool = True, tee: bool = False) -> tuple[float, pd.DataFrame]:
+    """Build and solve the MILP dispatch model. Returns (opex, dispatch_df).
 
-    mode: "fitted"          -- use MSE-fitted linearization slopes
-          "mean_efficiency" -- use mean of min/max efficiency within lambda region
+    normalize=True divides the objective by c_el so the solver only sees the
+    ratio c_G/c_el (better numerical scaling).
+
+    raw_normalized=True (only meaningful when normalize=True) returns the raw
+    normalized objective value OPEX/c_el instead of post-multiplying by c_el.
     """
-    if mode not in ("fitted", "mean_efficiency"):
-        raise ValueError("mode must be 'fitted' or 'mean_efficiency'")
-
-    if mode == "mean_efficiency":
-        slope_B    = m_B_heat_mean
-        slope_Q    = m_CHP_heat_mean
-        slope_P    = m_CHP_el_mean
-    else:
-        slope_B    = m_B_heat
-        slope_Q    = m_CHP_heat
-        slope_P    = m_CHP_el
-    m = ConcreteModel("ModE_P5_TES_dispatch_LP")
+    m = ConcreteModel("ModE_P5_TES_dispatch")
 
     m.K = RangeSet(0, N - 1)             # time intervals
     m.B = Set(initialize=[1, 2])         # boilers
@@ -124,12 +117,16 @@ def solve(
     m.Qin_TES = Var(m.K, domain=NonNegativeReals)           # TES charge flux [kW]
     m.Qout_TES = Var(m.K, domain=NonNegativeReals)          # TES discharge flux [kW]
     m.Pgrid = Var(m.K, domain=PGRID_DOMAIN)                 # grid power [kW]
+    m.dB = Var(m.B, m.K, domain=Binary)                     # boiler on/off
+    m.dCHP = Var(m.CHP, m.K, domain=Binary)                 # CHP on/off
+    m.din_TES = Var(m.K, domain=Binary)                     # TES charging flag
+    m.dout_TES = Var(m.K, domain=Binary)                    # TES discharging flag
 
-    # --- Auxiliary (y) decision variables ---
+    # --- Auxiliary (y) decision variables, kept for the SPARSE formulation ---
     m.E_TES = Var(m.K, domain=NonNegativeReals, bounds=(E_min_TES, E_nom_TES))  # (II)+(III)
-    m.Qout_B = Var(m.B, m.K, domain=NonNegativeReals)       # boiler thermal output [kW]
-    m.Qout_CHP = Var(m.CHP, m.K, domain=NonNegativeReals)    # CHP thermal output [kW]
-    m.Pout_CHP = Var(m.CHP, m.K, domain=NonNegativeReals)    # CHP electrical output [kW]
+    m.Qout_B = Var(m.B, m.K, domain=Reals)                  # boiler thermal output [kW]
+    m.Qout_CHP = Var(m.CHP, m.K, domain=Reals)              # CHP thermal output [kW]
+    m.Pout_CHP = Var(m.CHP, m.K, domain=Reals)              # CHP electrical output [kW]
 
     # Per-step gas/electricity energy (y-entries E_G, E_el). Kept as named Expressions
     # rather than Vars+equalities: identical math, no redundant rows. Swap to Var if
@@ -143,41 +140,83 @@ def solve(
         return dt * m.Pgrid[k]
 
     # ---------------------------------------------------------------------------
-    # 5. Constraints
+    # 5. Constraints  (decorator style, indexed over the relevant sets)
     # ---------------------------------------------------------------------------
 
     # --- TES ---
-    @m.Constraint(m.K)
+    @m.Constraint(m.K)                                      # TES (I) discretized + (VIII) cyclic
     def tes_dynamics(m, k):
         k_next = (k + 1) % N                                # wrap-around enforces E_TES(0)=E_TES(tf)
         return m.E_TES[k_next] == a * m.E_TES[k] + b1 * m.Qin_TES[k] + b2 * m.Qout_TES[k]
 
-    @m.Constraint(m.K)
+    if ENFORCE_TES_INITIAL:                                  # TES (IX) initial condition
+        @m.Constraint()
+        def tes_initial(m):
+            return m.E_TES[0] == E_TES_0
+
+    @m.Constraint(m.K)                                      # TES (IV)
     def tes_charge_ub(m, k):
-        return m.Qin_TES[k] <= E_nom_TES / tau_in
+        return m.Qin_TES[k] <= m.din_TES[k] * E_nom_TES / tau_in
 
-    @m.Constraint(m.K)
+    @m.Constraint(m.K)                                      # TES (V)
+    def tes_charge_lb(m, k):
+        return m.Qin_TES[k] >= m.din_TES[k] * Qin_min_TES
+
+    @m.Constraint(m.K)                                      # TES (VI)
     def tes_discharge_ub(m, k):
-        return m.Qout_TES[k] <= E_nom_TES / tau_out
+        return m.Qout_TES[k] <= m.dout_TES[k] * E_nom_TES / tau_out
 
-    # --- Boilers: linearized heat output ---
-    @m.Constraint(m.B, m.K)
+    @m.Constraint(m.K)                                      # TES (VII)
+    def tes_discharge_lb(m, k):
+        return m.Qout_TES[k] >= m.dout_TES[k] * Qout_min_TES
+
+    @m.Constraint(m.K)                                      # TES (IX)
+    def tes_no_simultaneous(m, k):
+        return m.din_TES[k] + m.dout_TES[k] <= 1
+
+    # --- Boilers ---
+    @m.Constraint(m.B, m.K)                                 # Boiler (I): part-load thermal output
     def boiler_output(m, i, k):
-        return m.Qout_B[i, k] == slope_B * m.Qin_B[i, k]
+        return m.Qout_B[i, k] == Qout_nom_B * (
+            m.dB[i, k] * lam_out_min_B
+            + (1.0 / beta_B) * (m.Qin_B[i, k] * eta_nom_B / Qout_nom_B - m.dB[i, k] * lam_in_min_B)
+        )
 
-    # --- CHPs: linearized heat and electricity outputs ---
-    @m.Constraint(m.CHP, m.K)
+    @m.Constraint(m.B, m.K)                                 # Boiler (II): fuel upper bound
+    def boiler_fuel_ub(m, i, k):
+        return m.Qin_B[i, k] <= m.dB[i, k] * Qout_nom_B / eta_nom_B
+
+    @m.Constraint(m.B, m.K)                                 # Boiler (III): fuel lower bound
+    def boiler_fuel_lb(m, i, k):
+        return m.Qin_B[i, k] >= m.dB[i, k] * lam_in_min_B * Qout_nom_B / eta_nom_B
+
+    # --- CHPs ---
+    @m.Constraint(m.CHP, m.K)                               # CHP (I): part-load thermal output
     def chp_heat(m, i, k):
-        return m.Qout_CHP[i, k] == slope_Q * m.Qin_CHP[i, k]
+        return m.Qout_CHP[i, k] == Qout_nom_CHP * (
+            m.dCHP[i, k] * lam_out_min_CHP_th
+            + (1.0 / beta_CHP_th) * (m.Qin_CHP[i, k] * eta_nom_CHP_th / Qout_nom_CHP - m.dCHP[i, k] * lam_in_min_CHP)
+        )
 
-    @m.Constraint(m.CHP, m.K)
+    @m.Constraint(m.CHP, m.K)                               # CHP (II): part-load electrical output
     def chp_power(m, i, k):
-        return m.Pout_CHP[i, k] == slope_P * m.Qin_CHP[i, k]
+        return m.Pout_CHP[i, k] == Pout_nom_CHP * (
+            m.dCHP[i, k] * lam_out_min_CHP_el
+            + (1.0 / beta_CHP_el) * (m.Qin_CHP[i, k] * eta_nom_CHP_el / Pout_nom_CHP - m.dCHP[i, k] * lam_in_min_CHP)
+        )
+
+    @m.Constraint(m.CHP, m.K)                               # CHP (III): fuel upper bound (thermal basis)
+    def chp_fuel_ub(m, i, k):
+        return m.Qin_CHP[i, k] <= m.dCHP[i, k] * Qout_nom_CHP / eta_nom_CHP_th
+
+    @m.Constraint(m.CHP, m.K)                               # CHP (IV): fuel lower bound (electrical basis)
+    def chp_fuel_lb(m, i, k):
+        return m.Qin_CHP[i, k] >= m.dCHP[i, k] * lam_in_min_CHP * Pout_nom_CHP / eta_nom_CHP_el
 
     _op = (lambda a, b: a == b) if strict_demand_satisfaction else (lambda a, b: a >= b)
 
     # --- Balances ---
-    @m.Constraint(m.K)
+    @m.Constraint(m.K)                                      # Demand (I): heat balance
     def heat_balance(m, k):
         return _op(
             sum(m.Qout_CHP[i, k] for i in m.CHP)
@@ -186,7 +225,7 @@ def solve(
             m.Q_D[k],
         )
 
-    @m.Constraint(m.K)
+    @m.Constraint(m.K)                                      # Demand (II): power balance
     def power_balance(m, k):
         return _op(sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k], m.P_D[k])
 
@@ -195,17 +234,22 @@ def solve(
     # ---------------------------------------------------------------------------
     @m.Objective(sense=minimize)
     def total_cost(m):
+        if normalize:
+            return (c_G / c_el) * sum(m.E_G[k] for k in m.K) + sum(m.E_el[k] for k in m.K)
         return c_G * sum(m.E_G[k] for k in m.K) + c_el * sum(m.E_el[k] for k in m.K)
 
     # ---------------------------------------------------------------------------
     # 7. Solve
     # ---------------------------------------------------------------------------
     solver = SolverFactory("gurobi")
-    solver.options["MIPGap"] = 1e-4
+    solver.options["MIPGap"] = mip_gap
     solver.options["TimeLimit"] = 300
     solver.solve(m, tee=tee)
 
-    opex = value(m.total_cost)
+    if normalize:
+        opex = value(m.total_cost) if raw_normalized else c_el * value(m.total_cost)
+    else:
+        opex = value(m.total_cost)
 
     rows = []
     for k in m.K:
@@ -217,6 +261,8 @@ def solve(
             "Qin_TES": value(m.Qin_TES[k]),
             "Qout_TES": value(m.Qout_TES[k]),
             "Pgrid": value(m.Pgrid[k]),
+            **{f"dB{i}": value(m.dB[i, k]) for i in m.B},
+            **{f"dCHP{i}": value(m.dCHP[i, k]) for i in m.CHP},
             **{f"Qin_B{i}": value(m.Qin_B[i, k]) for i in m.B},
             **{f"Qout_B{i}": value(m.Qout_B[i, k]) for i in m.B},
             **{f"Qin_CHP{i}": value(m.Qin_CHP[i, k]) for i in m.CHP},
@@ -229,13 +275,14 @@ def solve(
 
 def plot_dispatch_results(
     dispatch: pd.DataFrame,
-    output_path: str = "Marius/visualization/dispatch_overview_LP_approximated.png",
+    output_path: str = "Marius/visualization/dispatch_overview_MILP.png",
     gas_price: float | None = None,
     el_price: float | None = None,
     opex: float | None = None,
     fontsize: int = 10,
 ):
-    """Create a compact dashboard of the LP dispatch and energy flows."""
+    """Create a compact dashboard of unit commitment and energy flows."""
+    from matplotlib.patches import Patch
 
     fs_tick     = fontsize
     fs_label    = fontsize
@@ -248,27 +295,21 @@ def plot_dispatch_results(
 
     k = dispatch["k"].to_numpy()
 
-    fig, axes = plt.subplots(4, 1, figsize=(18, 18), sharex=True)
-
-    # 1) Unit commitment / utilization (continuous 0..1)
-    from matplotlib.colors import LinearSegmentedColormap
-
-    Qin_max_B = Qout_nom_B / eta_nom_B
-    Qin_max_CHP = Qout_nom_CHP / eta_nom_CHP_th
-
     on_matrix = np.vstack([
-        np.clip(dispatch["Qin_B1"].to_numpy() / Qin_max_B, 0.0, 1.0),
-        np.clip(dispatch["Qin_B2"].to_numpy() / Qin_max_B, 0.0, 1.0),
-        np.clip(dispatch["Qin_CHP1"].to_numpy() / Qin_max_CHP, 0.0, 1.0),
-        np.clip(dispatch["Qin_CHP2"].to_numpy() / Qin_max_CHP, 0.0, 1.0),
+        (dispatch["dB1"].to_numpy() > 0.5).astype(float),
+        (dispatch["dB2"].to_numpy() > 0.5).astype(float),
+        (dispatch["dCHP1"].to_numpy() > 0.5).astype(float),
+        (dispatch["dCHP2"].to_numpy() > 0.5).astype(float),
     ])
 
-    cmap_uc = LinearSegmentedColormap.from_list("uc_cmap", ["#ffffe5", "#238443"])
-    im = axes[0].imshow(
+    fig, axes = plt.subplots(4, 1, figsize=(18, 18), sharex=True)
+
+    # 1) Unit commitment timeline
+    axes[0].imshow(
         on_matrix,
         aspect="auto",
         interpolation="nearest",
-        cmap=cmap_uc,
+        cmap="YlGn",
         vmin=0,
         vmax=1,
         extent=[k[0] - 0.5, k[-1] + 0.5, -0.5, 3.5],
@@ -277,18 +318,21 @@ def plot_dispatch_results(
     axes[0].set_yticks([0, 1, 2, 3])
     axes[0].set_yticklabels(["Boiler 1", "Boiler 2", "CHP 1", "CHP 2"], fontsize=fs_tick)
     axes[0].tick_params(labelsize=fs_tick)
-    axes[0].set_title("Unit Utilization (0..1)", fontsize=fs_title)
+    axes[0].set_title("Unit Commitment (On/Off)", fontsize=fs_title)
     axes[0].set_ylabel("Units", fontsize=fs_label)
+    axes[0].legend(
+        handles=[
+            Patch(facecolor="#ffffe5", edgecolor="black", label="Off"),
+            Patch(facecolor="#238443", edgecolor="black", label="On"),
+        ],
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1),
+        borderaxespad=0,
+        title="Status",
+        fontsize=fs_legend,
+    )
 
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes as _inset_axes
-    cax = _inset_axes(axes[0], width="3%", height="100%", loc="lower left",
-                      bbox_to_anchor=(1.01, 0., 1, 1), bbox_transform=axes[0].transAxes,
-                      borderpad=0)
-    cbar = fig.colorbar(im, cax=cax)
-    cbar.set_label("Utilization [0..1]", fontsize=fs_label)
-    cbar.ax.tick_params(labelsize=fs_tick)
-
-    # 2) TES state and flows (same order as MILP)
+    # 2) TES charging/discharging and TES state of charge
     axes[1].bar(k, dispatch["Qout_TES"], width=0.9, label="TES discharge [kW]", color="#2C7FB8", alpha=0.9)
     axes[1].bar(k, -dispatch["Qin_TES"], width=0.9, label="TES charge [kW]", color="#EF3B2C", alpha=0.7)
     axes[1].plot(k, dispatch["E_TES"], color="#6A3D9A", linewidth=2.0, label="TES stored energy [kWh]")
@@ -299,7 +343,7 @@ def plot_dispatch_results(
     axes[1].grid(True, axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
     axes[1].legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, fontsize=fs_legend)
 
-    # 3) Electrical supply mix (same order as MILP)
+    # 3) Grid imports and electric balance context
     p_chp_total = dispatch["Pout_CHP1"] + dispatch["Pout_CHP2"]
     axes[2].fill_between(k, 0, dispatch["Pgrid"], step="mid", alpha=0.45, color="#FDAE61", label="Grid import")
     axes[2].plot(k, p_chp_total, color="#1B9E77", linewidth=2, label="CHP electric output")
@@ -311,7 +355,7 @@ def plot_dispatch_results(
     axes[2].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     axes[2].legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, fontsize=fs_legend)
 
-    # 4) Heat supply mix and gas purchase (same order as MILP)
+    # 4) Heat supply mix and gas purchase per step
     q_boiler_total = dispatch["Qout_B1"] + dispatch["Qout_B2"]
     q_chp_total = dispatch["Qout_CHP1"] + dispatch["Qout_CHP2"]
     q_tes_net = dispatch["Qout_TES"] - dispatch["Qin_TES"]
@@ -328,11 +372,12 @@ def plot_dispatch_results(
     axes[3].tick_params(labelsize=fs_tick)
     axes[3].grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     axes[3].legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, fontsize=fs_legend)
-    _title = f"Operational Dispatch Overview (LP) — gas={gas_value:.3f} €/kWh, el={el_value:.3f} €/kWh"
+
+    _title = f"Operational Dispatch Overview — gas={gas_value:.3f} €/kWh, el={el_value:.3f} €/kWh"
     if opex is not None:
         ratio_str = f"   |   c_G/c_el = {gas_value/el_value:.3f}" if el_value != 0 else ""
         _title += f"\nTotal OPEX: {opex:,.2f} €{ratio_str}"
-    fig.suptitle(_title, fontsize=fs_suptitle)
+    fig.suptitle(_title, fontsize=fs_suptitle, y=0.99)
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
@@ -345,19 +390,19 @@ def plot_dispatch_results(
 # Standalone entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    _cG = 0.16
-    _cel = 1.0
+    _cG = 0.2
+    _cel = 0.22
 
     print(f"N = {N} intervals, dt = {dt} h  ->  discretization a={a:.6f}, b1={b1:.6f}, b2={b2:.6f}")
-    print(f"Linearization slopes: boiler={m_B_heat:.4f}, CHP_heat={m_CHP_heat:.4f}, CHP_el={m_CHP_el:.4f}")
+    print(f"beta_B={beta_B:.5f}, beta_CHP_th={beta_CHP_th:.5f}, beta_CHP_el={beta_CHP_el:.5f}")
 
     opex, dispatch = solve(_cG, _cel, tee=True)
 
     print("\nSolver status: done")
     print(f"Total cost    : {opex:.2f}")
 
-    dispatch.to_csv("Marius/results/dispatch_result_LP_approximated.csv", index=False)
-    print("Dispatch written to Marius/results/dispatch_result_LP_approximated.csv")
+    dispatch.to_csv("Marius/results/dispatch_result_MILP.csv", index=False)
+    print("Dispatch written to Marius/results/dispatch_result_MILP.csv")
 
     plot_dispatch_results(dispatch, gas_price=_cG, el_price=_cel, opex=opex, fontsize=18)
-    print("Dispatch visualization written to Marius/visualization/dispatch_overview_LP_approximated.png")
+    print("Dispatch visualization written to Marius/visualization/dispatch_overview_MILP.png")
