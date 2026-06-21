@@ -1,12 +1,34 @@
 """
-ModE Project 5 -- LP operational dispatch of a district energy system
-(2 boilers + 2 CHPs + thermal energy storage), exact ZOH discretization.
+ModE Project 5 -- LP approximation of the MILP dispatch formulation.
 
-This file mirrors formulation_MILP.py but removes the binary commitment variables
-and replaces the boiler/CHP part-load equations with the linearized models
-obtained from the notebook-based MSE fit.
+Mirrors formulation_MILP.py but removes all binary commitment variables and
+replaces the piecewise-linear part-load equations with simple proportional
+(through-the-origin) linearizations:  OUT = slope * IN.
 
-The result is a pure LP.
+Two linearization modes are available via solve(..., mode=...):
+
+  "fitted"          -- slopes fitted by MSE minimization over the operating
+                       region (from the notebook):
+                         m_B_heat  = 0.8078
+                         m_CHP_heat = 0.3948
+                         m_CHP_el   = 0.2980
+
+  "mean_efficiency" -- slopes computed analytically as the mean of the
+                       efficiency at minimum load and maximum load within the
+                       lambda operating region:
+                         m_B_heat_mean   = mean(eta at lam_in_min, eta at 1)
+                         m_CHP_heat_mean = mean(eta_th at lam_in_min, eta_nom_CHP_th)
+                         m_CHP_el_mean   = mean(eta_el at lam_in_min, eta_nom_CHP_el)
+
+No commitment variables exist in either mode; fuel inputs are bounded above by
+the nominal capacity and below by zero (minimum-load constraints are dropped).
+The TES is modelled identically to formulation_MILP.py (no binary flags for
+charge/discharge direction; simultaneous charge and discharge is possible).
+
+solve(c_G, c_el, mode="fitted", ...) returns (opex, dispatch_df).
+
+NOTE: keep this docstring up to date whenever the linearization slopes,
+available modes, or solve() signature change.
 """
 
 import numpy as np

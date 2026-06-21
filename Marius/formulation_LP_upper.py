@@ -1,17 +1,44 @@
 """
 ModE Project 5 -- LP upper bound of the MILP dispatch formulation.
 
-Fixes unit commitment deltas (dB, dCHP, din_TES, dout_TES) to one of three
-modes, giving a feasible MILP solution whose cost is an upper bound:
-  - "boilers_on": dB=1, dCHP=0, din_TES=0, dout_TES=0 (TES off by default)
-  - "chp_on":     dCHP=1, dB=0, din_TES=0, dout_TES=0 (TES off by default)
-  - "rounded":    solve LP lower bound, round all deltas per timestep, re-solve
+Fixes unit commitment deltas per timestep to produce a feasible MILP solution
+whose cost is an upper bound on the MILP optimum.  Three modes are supported:
 
-TES deltas alternate (din=1/dout=0 on even steps, din=0/dout=1 on odd steps) in
-boilers_on/chp_on, giving the solver the option to charge or discharge each step
-without forcing it to (bounds are upper bounds only; actual flows can be zero).
+  "boilers_on"  -- per-timestep heuristic: prefer one boiler, add second only
+                   when one boiler's maximum output is insufficient.
+                   CHPs are off.  Decision rules (in priority order):
+                     Rule 1: B_max_Q >= Q_D[k]  -> boiler 1 only
+                     Fallback:                   -> both boilers
+
+  "chp_on"      -- per-timestep heuristic: use CHPs as primary source, add
+                   boilers only when CHPs alone cannot cover demand without
+                   violating minimum-load constraints.  Boilers are off unless
+                   needed.  Decision rules (in priority order):
+                     Rule 0: CHP min overproduces heat or power -> boilers only
+                     Rule 1: both CHPs within min bounds        -> both CHPs
+                     Rule 2: CHP 1 alone suffices               -> CHP 1 only
+                     Rule 3: CHP 1 + boiler 1 suffices          -> CHP 1 + B 1
+                     Rule 4 (fallback):                         -> CHP 1 + B 1 + B 2
+
+  "rounded"     -- solve LP lower bound, round all deltas (dB, dCHP, din_TES,
+                   dout_TES) to nearest integer per timestep, then fix and
+                   re-solve as LP.
+
+TES commitment in "boilers_on"/"chp_on": din_TES alternates 1/0 on even/odd
+steps and dout_TES alternates 0/1, giving the solver the option to charge or
+discharge every step (bounds are upper bounds; actual flows can be zero).
+
+solve(c_G, c_el, ...) default (mode="min"): runs both "boilers_on" and "chp_on"
+and returns (opex, dispatch_df) for the mode with the lower cost.
+Pass return_both=True to get ((opex_bo, dispatch_bo), (opex_chp, dispatch_chp)).
+Pass mode="boilers_on", "chp_on", or "rounded" to run a single mode.
+Returns (nan, empty DataFrame) when the solver does not reach optimal/feasible.
 
 Conventions: same as formulation_MILP.py.
+
+NOTE: keep this docstring up to date whenever the heuristic rules or solve()
+signature change -- the rule descriptions in the module docstring and the
+inline comments inside solve() must stay consistent with each other.
 """
 
 import numpy as np
@@ -80,27 +107,15 @@ N = len(_df)
 # ---------------------------------------------------------------------------
 # 4. Callable solve function
 # ---------------------------------------------------------------------------
-def solve(
+def _solve_single(
     c_G: float,
     c_el: float,
     *,
-    mode: str = "boilers_on",
+    mode: str,
     strict_demand_satisfaction: bool = True,
     tee: bool = False,
 ) -> tuple[float, pd.DataFrame]:
-    """
-    Build and solve the LP upper-bound dispatch model.
-
-    mode: "boilers_on" -- dB=1 for all boilers, dCHP=0 for all CHPs
-          "chp_on"     -- dCHP=1 for all CHPs, dB=0 for all boilers
-          "rounded"    -- solve LP lower bound first, round all commitment
-                         deltas (dB, dCHP, din_TES, dout_TES) to nearest
-                         integer per timestep, then fix and re-solve as LP
-
-    TES deltas are dropped in boilers_on/chp_on; Qin_TES and Qout_TES are
-    bounded only by physical capacity.  In "rounded" mode TES deltas are
-    also fixed to their rounded values.
-    """
+    """Run one specific mode: 'boilers_on', 'chp_on', or 'rounded'."""
     if mode not in ("boilers_on", "chp_on", "rounded"):
         raise ValueError("mode must be 'boilers_on', 'chp_on', or 'rounded'")
 
@@ -398,6 +413,45 @@ def solve(
         })
 
     return opex, pd.DataFrame(rows)
+
+
+def solve(
+    c_G: float,
+    c_el: float,
+    *,
+    mode: str = "min",
+    return_both: bool = False,
+    strict_demand_satisfaction: bool = True,
+    tee: bool = False,
+) -> tuple[float, pd.DataFrame]:
+    """Build and solve the LP upper-bound model.
+
+    Default (mode='min'): runs both 'boilers_on' and 'chp_on' and returns
+    (opex, dispatch_df) for whichever mode gives the lower cost.
+
+    return_both=True: runs both modes and returns
+    ((opex_bo, dispatch_bo), (opex_chp, dispatch_chp)).
+
+    Explicit mode ('boilers_on', 'chp_on', 'rounded'): runs that single mode
+    and returns (opex, dispatch_df) as before.
+    """
+    if mode == "min" or return_both:
+        bo  = _solve_single(c_G, c_el, mode="boilers_on",
+                            strict_demand_satisfaction=strict_demand_satisfaction, tee=tee)
+        chp = _solve_single(c_G, c_el, mode="chp_on",
+                            strict_demand_satisfaction=strict_demand_satisfaction, tee=tee)
+        if return_both:
+            return bo, chp
+        bo_opex, chp_opex = bo[0], chp[0]
+        if np.isnan(bo_opex) and np.isnan(chp_opex):
+            return float("nan"), pd.DataFrame()
+        if np.isnan(bo_opex):
+            return chp
+        if np.isnan(chp_opex):
+            return bo
+        return bo if bo_opex <= chp_opex else chp
+    return _solve_single(c_G, c_el, mode=mode,
+                         strict_demand_satisfaction=strict_demand_satisfaction, tee=tee)
 
 
 def plot_dispatch_results(
