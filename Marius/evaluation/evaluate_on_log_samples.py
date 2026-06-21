@@ -34,7 +34,7 @@ for i, ratio in enumerate(ratios):
     print(f"  MILP={opex_milp:,.2f}  LP_lower={opex_lower:,.2f}  LP_upper={opex_upper:,.2f}  LP_approx={opex_approx:,.2f}")
 
 df = pd.DataFrame(rows)
-out_path = "Marius/results/evaluation_log_samples_min_ub.csv"
+out_path = "Marius/results/evaluation_log_samples.csv"
 df.to_csv(out_path, index=False)
 print(f"\nSaved {len(df)} rows to {out_path}")
 
@@ -67,7 +67,7 @@ ax.legend(**LEGEND_KW)
 ax.grid(True, which="both", ls="--", alpha=0.5)
 fig.tight_layout()
 
-plot_path = "Marius/visualization/evaluation_log_samples_min_ub.png"
+plot_path = "Marius/visualization/evaluation_log_samples.png"
 fig.savefig(plot_path, dpi=150)
 print(f"Plot saved to {plot_path}")
 plt.show()
