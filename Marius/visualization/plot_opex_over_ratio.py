@@ -48,11 +48,9 @@ if REWRITE or not (Path(__file__).parent / ".." / "results" / "opex_vs_price_rat
         print(f"  OPEX (LP lower) = {opex_lp_lower:,.2f}")
         opex_lp_lower_values.append(opex_lp_lower)
 
-        opex_bo = solve_lp_upper(c_G, c_el, mode="boilers_on", strict_demand_satisfaction=strict_demand_satisfaction)[0]
+        (opex_bo, _), (opex_chp, _) = solve_lp_upper(c_G, c_el, return_both=True, strict_demand_satisfaction=strict_demand_satisfaction)
         print(f"  OPEX (LP upper boilers_on) = {opex_bo:,.2f}")
         opex_lp_upper_bo_values.append(opex_bo)
-
-        opex_chp = solve_lp_upper(c_G, c_el, mode="chp_on", strict_demand_satisfaction=strict_demand_satisfaction)[0]
         print(f"  OPEX (LP upper chp_on) = {opex_chp:,.2f}")
         opex_lp_upper_chp_values.append(opex_chp)
 

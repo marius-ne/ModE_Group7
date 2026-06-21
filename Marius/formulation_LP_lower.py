@@ -1,13 +1,18 @@
 """
-ModE Project 5 -- LP relaxation of the MILP dispatch formulation.
+ModE Project 5 -- LP relaxation of the MILP dispatch formulation (lower bound).
 
 Identical to formulation_MILP.py except that the four binary commitment
 variables (dB, dCHP, din_TES, dout_TES) are relaxed to continuous variables
-in [0, 1].  The result is a pure LP (no integrality constraints), which
-provides a lower bound on the MILP objective and often yields fractional
-commitment schedules.
+in [0, 1].  The result is a pure LP (no integrality constraints) whose
+optimal value is a lower bound on the MILP objective; commitment schedules
+are often fractional.
+
+solve(c_G, c_el, ...) returns (opex, dispatch_df).
 
 Conventions: same as formulation_MILP.py.
+
+NOTE: keep this docstring up to date whenever the model or solve() signature
+changes.
 """
 
 import numpy as np

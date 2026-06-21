@@ -5,6 +5,16 @@ ModE Project 5 -- MILP operational dispatch of a district energy system
 Implements the sparse problem formulation from `problem_formulation_Marius.pdf`
 in Pyomo and solves it with Gurobi.
 
+solve(c_G, c_el, ...) builds and solves the model for one (c_G, c_el) pair and
+returns (opex, dispatch_df).  Optional flags:
+  normalize=True      -- divide the objective by c_el (only the ratio enters
+                         the solver; better numerical scaling)
+  raw_normalized=True -- (only with normalize=True) return OPEX/c_el instead
+                         of post-multiplying back by c_el
+  mip_gap             -- Gurobi MIPGap tolerance (default 1e-3)
+  strict_demand_satisfaction -- True (default) enforces equality heat/power
+                         balances; False relaxes them to >= inequalities
+
 Conventions / modeling decisions (read these -- some affect the optimum):
   * Time index k in {0, ..., N-1}, i.e. N intervals of length dt. The state
     E_TES[k] is the storage content at the START of interval k. The cyclic
@@ -13,14 +23,15 @@ Conventions / modeling decisions (read these -- some affect the optimum):
     initial condition (IX) E_TES(0) = E_TES_0 = 0 is enforced only when
     ENFORCE_TES_INITIAL = True; by default the solver optimises over all
     periodic trajectories without fixing the starting level.
-  * cG, cel are the *uncertain* parameters in the PDF (sampled within ranges).
-    Here they are single placeholder values -- SET THEM to your sample/midpoint
-    or loop the build+solve over your samples.
   * Pgrid is import-only (NonNegativeReals): the power balance is an exact
     equality and the grid covers the deficit, so the CHPs can never produce
     more electricity than P_D at any step (no export). Set PGRID_DOMAIN = Reals
     to allow export (Pgrid < 0).
-  * The heat/power balances (Demand I/II) are equalities, exactly as written.
+  * The heat/power balances (Demand I/II) are equalities by default, exactly
+    as written in the PDF.
+
+NOTE: keep this docstring up to date whenever the model or solve() signature
+changes.
 """
 
 import numpy as np
