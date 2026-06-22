@@ -2,13 +2,14 @@ import sys
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-from numpy.compat import Path
+from pathlib import Path
 
-sys.path.append("Marius")  # to import formulation_MILP from parent directory
-from formulation_MILP import solve
-from formulation_LP_lower import solve as solve_lp_lower
-from formulation_LP_upper import solve as solve_lp_upper
-from formulation_LP_approximated import solve as solve_lp_approx
+sys.path.append("Erdem")
+from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_upper, solve_lp_approximated
+
+_demand_df = pd.read_csv(Path("energy_demands.csv"))
+_Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
+_P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 
 # Manually rerun tests by setting below to True
 REWRITE = False
@@ -38,30 +39,30 @@ if REWRITE or not (Path(__file__).parent / ".." / "results" / "opex_vs_price_rat
         price_ratio = c_G / c_el
         print(f"c_G={c_G:.4f}  c_el={c_el:.4f}  ratio={price_ratio:.2f}")
 
-        opex_milp, dispatch_milp = solve(c_G, c_el, mip_gap=1e-2, strict_demand_satisfaction=strict_demand_satisfaction)
+        opex_milp, dispatch_milp = solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=1e-2, strict_demand_satisfaction=strict_demand_satisfaction)
         print(f"  OPEX (MILP) = {opex_milp:,.2f}")
         opex_milp_values.append(opex_milp)
         sum_dB_values.append((dispatch_milp["dB1"] + dispatch_milp["dB2"]).sum())
         sum_dCHP_values.append((dispatch_milp["dCHP1"] + dispatch_milp["dCHP2"]).sum())
 
-        opex_lp_lower = solve_lp_lower(c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
+        opex_lp_lower = solve_lp_lower(_Q_D, _P_D, c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
         print(f"  OPEX (LP lower) = {opex_lp_lower:,.2f}")
         opex_lp_lower_values.append(opex_lp_lower)
 
-        (opex_bo, _), (opex_chp, _) = solve_lp_upper(c_G, c_el, return_both=True, strict_demand_satisfaction=strict_demand_satisfaction)
+        (opex_bo, _), (opex_chp, _) = solve_lp_upper(_Q_D, _P_D, c_G, c_el, return_both=True, strict_demand_satisfaction=strict_demand_satisfaction)
         print(f"  OPEX (LP upper boilers_on) = {opex_bo:,.2f}")
         opex_lp_upper_bo_values.append(opex_bo)
         print(f"  OPEX (LP upper chp_on) = {opex_chp:,.2f}")
         opex_lp_upper_chp_values.append(opex_chp)
 
         if SOLVE_LP_UPPER_ROUNDED:
-            opex_rounded = solve_lp_upper(c_G, c_el, mode="rounded", strict_demand_satisfaction=strict_demand_satisfaction)[0]
+            opex_rounded = solve_lp_upper(_Q_D, _P_D, c_G, c_el, mode="rounded", strict_demand_satisfaction=strict_demand_satisfaction)[0]
         else:
             opex_rounded = float("nan")
         print(f"  OPEX (LP upper rounded) = {opex_rounded:,.2f}")
         opex_lp_upper_rounded_values.append(opex_rounded)
 
-        opex_approx_mean = solve_lp_approx(c_G, c_el, mode="mean_efficiency", strict_demand_satisfaction=strict_demand_satisfaction)[0]
+        opex_approx_mean = solve_lp_approximated(_Q_D, _P_D, c_G, c_el, mode="mean_efficiency", strict_demand_satisfaction=strict_demand_satisfaction)[0]
         print(f"  OPEX (LP approx mean_eff) = {opex_approx_mean:,.2f}\n")
         opex_lp_approx_mean_values.append(opex_approx_mean)
 

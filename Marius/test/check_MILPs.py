@@ -21,12 +21,21 @@ Usage:
 import json
 import sys
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from pathlib import Path
 
-sys.path.insert(0, "Marius")
-from formulation_MILP import solve
+sys.path.append("Erdem")
+from src.optimization.core import solve_milp
+
+_demand_df = pd.read_csv(Path("energy_demands.csv"))
+_Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
+_P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
+
+def solve(c_G, c_el, *, mip_gap=1e-3, normalize=False, raw_normalized=False):
+    return solve_milp(_Q_D, _P_D, c_G, c_el,
+                      mip_gap=mip_gap, normalize=normalize, raw_normalized=raw_normalized)
 
 # ---------------------------------------------------------------------------
 # Settings

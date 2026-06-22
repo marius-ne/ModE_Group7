@@ -77,7 +77,10 @@ def build_milp(
         Q_D: pd.Series,
         P_D: pd.Series,
         c_g: float,
-        c_el: float
+        c_el: float,
+        *,
+        normalize: bool = False,
+        strict_demand_satisfaction: bool = True,
 ) -> pyo.ConcreteModel:
     """
     Builds a mixed-integer linear programming (MILP) model for the multi-energy system optimization problem.
@@ -176,6 +179,8 @@ def build_milp(
     # 3.4  OBJECTIVE
     # -------------------------------------------------------------------------
     def obj_rule(m):
+        if normalize:
+            return (c_g / c_el) * sum(m.E_gas[k] for k in m.K) + sum(m.E_el[k] for k in m.K)
         return m.c_g * sum(m.E_gas[k] for k in m.K) + m.c_el * sum(m.E_el[k] for k in m.K)
     m.OBJ = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
 
@@ -296,25 +301,31 @@ def build_milp(
     m.c_CHP_in_lb = pyo.Constraint(m.C, m.K, rule=chp_in_lb)
 
     # -- Demand satisfaction --------------------------------------------------
+    _op = (lambda lhs, rhs: lhs == rhs) if strict_demand_satisfaction else (lambda lhs, rhs: lhs >= rhs)
+
     # (I) Heat demand balance:
     def heat_balance(m, k):
         tes_net = m.Q_out_TES[k] - m.Q_in_TES[k]
-        return (sum(m.Q_out_CHP[i, k] for i in m.C) + sum(m.Q_out_B[i, k] for i in m.B) + tes_net == m.Q_D[k])
+        return _op(
+            sum(m.Q_out_CHP[i, k] for i in m.C) + sum(m.Q_out_B[i, k] for i in m.B) + tes_net,
+            m.Q_D[k],
+        )
     m.c_heat = pyo.Constraint(m.K, rule=heat_balance)
 
     # (II) Electricity demand balance
     def elec_balance(m, k):
-        return (sum(m.P_out_CHP[i, k] for i in m.C) + m.P_grid[k] == m.P_D[k])
+        return _op(sum(m.P_out_CHP[i, k] for i in m.C) + m.P_grid[k], m.P_D[k])
     m.c_elec = pyo.Constraint(m.K, rule=elec_balance)
 
     return m
 
 
-def solve_model(model: pyo.ConcreteModel, solver_name: str = "gurobi", **solver_options):
+def solve_model(model: pyo.ConcreteModel, solver_name: str = "gurobi", tee: bool = True, **solver_options):
         """
         Solves the given optimization model using the specified solver.
         :param model: Pyomo ConcreteModel to be solved
         :param solver_name: Name of the solver to use (default: "gurobi")
+        :param tee: Stream solver output to console (default: True)
         :param solver_options: Options for the solver
         :return: Optimization results of the model
         """
@@ -322,7 +333,7 @@ def solve_model(model: pyo.ConcreteModel, solver_name: str = "gurobi", **solver_
             solver = pyo.SolverFactory(solver_name)
             solver.options.update(solver_options)
 
-            results = solver.solve(model, tee=True)
+            results = solver.solve(model, tee=tee)
 
             return results
         except Exception as e:
@@ -523,4 +534,669 @@ def load_optimization_results(
         raise
 
     return solution_df, metadata_dict
+
+
+# == LP approximated linearization slopes =====================================
+# Fitted by MSE minimization over the operating region
+m_B_heat_fitted   = 0.8078
+m_CHP_heat_fitted = 0.3948
+m_CHP_el_fitted   = 0.2980
+
+# Mean of the efficiency at minimum and maximum load within the lambda region
+_lp_Qin_CHP_min = lambda_in_min_CHP * P_out_nom_CHP / eta_nom_CHP_el
+m_B_heat_mean   = ((lambda_out_min_B * eta_nom_B / lambda_in_min_B) + eta_nom_B) / 2
+m_CHP_heat_mean = ((lambda_out_min_CHP_th * Q_out_nom_CHP / _lp_Qin_CHP_min) + eta_nom_CHP_th) / 2
+m_CHP_el_mean   = ((lambda_out_min_CHP_el * P_out_nom_CHP / _lp_Qin_CHP_min) + eta_nom_CHP_el) / 2
+
+
+def build_lp_lower(
+        Q_D,
+        P_D,
+        c_g: float,
+        c_el: float,
+        *,
+        strict_demand_satisfaction: bool = True,
+) -> pyo.ConcreteModel:
+    """
+    Builds the LP binary-relaxation of the MILP (lower bound on MILP optimum).
+    All four binary commitment variables are relaxed to continuous [0, 1].
+    :param Q_D: Heat demand array [kW], length n
+    :param P_D: Electrical demand array [kW], length n
+    :param c_g: Gas price [€/kWh]
+    :param c_el: Electricity price [€/kWh]
+    :param strict_demand_satisfaction: True → equality balances; False → >= inequalities
+    :return: Unsolved pyo.ConcreteModel
+    """
+    Q_D_arr = np.asarray(Q_D, dtype=float)
+    P_D_arr = np.asarray(P_D, dtype=float)
+    n = len(Q_D_arr)
+
+    m = pyo.ConcreteModel(name="LP_lower")
+    m.K   = pyo.RangeSet(0, n - 1)
+    m.B   = pyo.Set(initialize=[1, 2])
+    m.CHP = pyo.Set(initialize=[1, 2])
+
+    m.c_g  = pyo.Param(initialize=c_g)
+    m.c_el = pyo.Param(initialize=c_el)
+    m.Q_D  = pyo.Param(m.K, initialize={k: Q_D_arr[k] for k in range(n)})
+    m.P_D  = pyo.Param(m.K, initialize={k: P_D_arr[k] for k in range(n)})
+
+    # Relaxed commitment variables [0, 1]
+    m.dB       = pyo.Var(m.B,   m.K, domain=pyo.NonNegativeReals, bounds=(0.0, 1.0))
+    m.dCHP     = pyo.Var(m.CHP, m.K, domain=pyo.NonNegativeReals, bounds=(0.0, 1.0))
+    m.din_TES  = pyo.Var(m.K,   domain=pyo.NonNegativeReals, bounds=(0.0, 1.0))
+    m.dout_TES = pyo.Var(m.K,   domain=pyo.NonNegativeReals, bounds=(0.0, 1.0))
+
+    # Continuous decision variables
+    m.Qin_B    = pyo.Var(m.B,   m.K, domain=pyo.NonNegativeReals)
+    m.Qin_CHP  = pyo.Var(m.CHP, m.K, domain=pyo.NonNegativeReals)
+    m.Qin_TES  = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+    m.Qout_TES = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+    m.Pgrid    = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+
+    # Auxiliary variables
+    m.E_TES    = pyo.Var(m.K,   domain=pyo.NonNegativeReals, bounds=(E_min_TES, E_nom_TES))
+    m.Qout_B   = pyo.Var(m.B,   m.K, domain=pyo.Reals)
+    m.Qout_CHP = pyo.Var(m.CHP, m.K, domain=pyo.Reals)
+    m.Pout_CHP = pyo.Var(m.CHP, m.K, domain=pyo.Reals)
+
+    def obj_rule(m):
+        return (
+            m.c_g  * DELTA_T * sum(sum(m.Qin_B[i, k] for i in m.B) + sum(m.Qin_CHP[i, k] for i in m.CHP) for k in m.K)
+            + m.c_el * DELTA_T * sum(m.Pgrid[k] for k in m.K)
+        )
+    m.OBJ = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
+
+    # TES
+    def tes_dyn(m, k):
+        return m.E_TES[(k + 1) % n] == a_TES * m.E_TES[k] + b1_TES * m.Qin_TES[k] + b2_TES * m.Qout_TES[k]
+    m.c_TES_dyn = pyo.Constraint(m.K, rule=tes_dyn)
+
+    def tes_in_ub(m, k):
+        return m.Qin_TES[k] <= m.din_TES[k] * E_nom_TES / tau_in
+    m.c_TES_in_ub = pyo.Constraint(m.K, rule=tes_in_ub)
+
+    def tes_in_lb(m, k):
+        return m.Qin_TES[k] >= m.din_TES[k] * Q_in_min_TES
+    m.c_TES_in_lb = pyo.Constraint(m.K, rule=tes_in_lb)
+
+    def tes_out_ub(m, k):
+        return m.Qout_TES[k] <= m.dout_TES[k] * E_nom_TES / tau_out
+    m.c_TES_out_ub = pyo.Constraint(m.K, rule=tes_out_ub)
+
+    def tes_out_lb(m, k):
+        return m.Qout_TES[k] >= m.dout_TES[k] * Q_out_min_TES
+    m.c_TES_out_lb = pyo.Constraint(m.K, rule=tes_out_lb)
+
+    def tes_mutex(m, k):
+        return m.din_TES[k] + m.dout_TES[k] <= 1
+    m.c_TES_mutex = pyo.Constraint(m.K, rule=tes_mutex)
+
+    # Boilers
+    def boiler_pl(m, i, k):
+        return m.Qout_B[i, k] == Q_out_nom_B * (
+            m.dB[i, k] * lambda_out_min_B
+            + (1.0 / beta_B) * (m.Qin_B[i, k] * eta_nom_B / Q_out_nom_B - m.dB[i, k] * lambda_in_min_B)
+        )
+    m.c_B_pl = pyo.Constraint(m.B, m.K, rule=boiler_pl)
+
+    def boiler_in_ub(m, i, k):
+        return m.Qin_B[i, k] <= m.dB[i, k] * Q_out_nom_B / eta_nom_B
+    m.c_B_in_ub = pyo.Constraint(m.B, m.K, rule=boiler_in_ub)
+
+    def boiler_in_lb(m, i, k):
+        return m.Qin_B[i, k] >= m.dB[i, k] * lambda_in_min_B * Q_out_nom_B / eta_nom_B
+    m.c_B_in_lb = pyo.Constraint(m.B, m.K, rule=boiler_in_lb)
+
+    # CHPs
+    def chp_th_pl(m, i, k):
+        return m.Qout_CHP[i, k] == Q_out_nom_CHP * (
+            m.dCHP[i, k] * lambda_out_min_CHP_th
+            + (1.0 / beta_CHP_th) * (m.Qin_CHP[i, k] * eta_nom_CHP_th / Q_out_nom_CHP - m.dCHP[i, k] * lambda_in_min_CHP)
+        )
+    m.c_CHP_th = pyo.Constraint(m.CHP, m.K, rule=chp_th_pl)
+
+    def chp_el_pl(m, i, k):
+        return m.Pout_CHP[i, k] == P_out_nom_CHP * (
+            m.dCHP[i, k] * lambda_out_min_CHP_el
+            + (1.0 / beta_CHP_el) * (m.Qin_CHP[i, k] * eta_nom_CHP_el / P_out_nom_CHP - m.dCHP[i, k] * lambda_in_min_CHP)
+        )
+    m.c_CHP_el = pyo.Constraint(m.CHP, m.K, rule=chp_el_pl)
+
+    def chp_in_ub(m, i, k):
+        return m.Qin_CHP[i, k] <= m.dCHP[i, k] * Q_out_nom_CHP / eta_nom_CHP_th
+    m.c_CHP_in_ub = pyo.Constraint(m.CHP, m.K, rule=chp_in_ub)
+
+    def chp_in_lb(m, i, k):
+        return m.Qin_CHP[i, k] >= m.dCHP[i, k] * lambda_in_min_CHP * P_out_nom_CHP / eta_nom_CHP_el
+    m.c_CHP_in_lb = pyo.Constraint(m.CHP, m.K, rule=chp_in_lb)
+
+    _op = (lambda lhs, rhs: lhs == rhs) if strict_demand_satisfaction else (lambda lhs, rhs: lhs >= rhs)
+
+    def heat_balance(m, k):
+        return _op(
+            sum(m.Qout_CHP[i, k] for i in m.CHP) + sum(m.Qout_B[i, k] for i in m.B)
+            + m.Qout_TES[k] - m.Qin_TES[k],
+            m.Q_D[k],
+        )
+    m.c_heat = pyo.Constraint(m.K, rule=heat_balance)
+
+    def elec_balance(m, k):
+        return _op(sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k], m.P_D[k])
+    m.c_elec = pyo.Constraint(m.K, rule=elec_balance)
+
+    return m
+
+
+def build_lp_approximated(
+        Q_D,
+        P_D,
+        c_g: float,
+        c_el: float,
+        *,
+        mode: str = "mean_efficiency",
+        strict_demand_satisfaction: bool = True,
+) -> pyo.ConcreteModel:
+    """
+    Builds the LP approximation of the MILP: binary commitment variables are dropped
+    and part-load curves are replaced by proportional (through-the-origin) slopes.
+    :param Q_D: Heat demand array [kW], length n
+    :param P_D: Electrical demand array [kW], length n
+    :param c_g: Gas price [€/kWh]
+    :param c_el: Electricity price [€/kWh]
+    :param mode: 'fitted' (MSE-fitted slopes) or 'mean_efficiency' (analytic mean)
+    :param strict_demand_satisfaction: True → equality balances; False → >= inequalities
+    :return: Unsolved pyo.ConcreteModel
+    """
+    if mode not in ("fitted", "mean_efficiency"):
+        raise ValueError("mode must be 'fitted' or 'mean_efficiency'")
+
+    if mode == "mean_efficiency":
+        slope_B = m_B_heat_mean
+        slope_Q = m_CHP_heat_mean
+        slope_P = m_CHP_el_mean
+    else:
+        slope_B = m_B_heat_fitted
+        slope_Q = m_CHP_heat_fitted
+        slope_P = m_CHP_el_fitted
+
+    Q_D_arr = np.asarray(Q_D, dtype=float)
+    P_D_arr = np.asarray(P_D, dtype=float)
+    n = len(Q_D_arr)
+
+    m = pyo.ConcreteModel(name="LP_approximated")
+    m.K   = pyo.RangeSet(0, n - 1)
+    m.B   = pyo.Set(initialize=[1, 2])
+    m.CHP = pyo.Set(initialize=[1, 2])
+
+    m.c_g  = pyo.Param(initialize=c_g)
+    m.c_el = pyo.Param(initialize=c_el)
+    m.Q_D  = pyo.Param(m.K, initialize={k: Q_D_arr[k] for k in range(n)})
+    m.P_D  = pyo.Param(m.K, initialize={k: P_D_arr[k] for k in range(n)})
+
+    # Continuous decision variables (no commitment variables)
+    m.Qin_B    = pyo.Var(m.B,   m.K, domain=pyo.NonNegativeReals)
+    m.Qin_CHP  = pyo.Var(m.CHP, m.K, domain=pyo.NonNegativeReals)
+    m.Qin_TES  = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+    m.Qout_TES = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+    m.Pgrid    = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+
+    # Auxiliary variables
+    m.E_TES    = pyo.Var(m.K,   domain=pyo.NonNegativeReals, bounds=(E_min_TES, E_nom_TES))
+    m.Qout_B   = pyo.Var(m.B,   m.K, domain=pyo.NonNegativeReals)
+    m.Qout_CHP = pyo.Var(m.CHP, m.K, domain=pyo.NonNegativeReals)
+    m.Pout_CHP = pyo.Var(m.CHP, m.K, domain=pyo.NonNegativeReals)
+
+    def obj_rule(m):
+        return (
+            m.c_g  * DELTA_T * sum(sum(m.Qin_B[i, k] for i in m.B) + sum(m.Qin_CHP[i, k] for i in m.CHP) for k in m.K)
+            + m.c_el * DELTA_T * sum(m.Pgrid[k] for k in m.K)
+        )
+    m.OBJ = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
+
+    # TES
+    def tes_dyn(m, k):
+        return m.E_TES[(k + 1) % n] == a_TES * m.E_TES[k] + b1_TES * m.Qin_TES[k] + b2_TES * m.Qout_TES[k]
+    m.c_TES_dyn = pyo.Constraint(m.K, rule=tes_dyn)
+
+    def tes_in_ub(m, k):
+        return m.Qin_TES[k] <= E_nom_TES / tau_in
+    m.c_TES_in_ub = pyo.Constraint(m.K, rule=tes_in_ub)
+
+    def tes_out_ub(m, k):
+        return m.Qout_TES[k] <= E_nom_TES / tau_out
+    m.c_TES_out_ub = pyo.Constraint(m.K, rule=tes_out_ub)
+
+    # Boilers: linearized output
+    def boiler_pl(m, i, k):
+        return m.Qout_B[i, k] == slope_B * m.Qin_B[i, k]
+    m.c_B_pl = pyo.Constraint(m.B, m.K, rule=boiler_pl)
+
+    def boiler_in_ub(m, i, k):
+        return m.Qin_B[i, k] <= Q_out_nom_B / eta_nom_B
+    m.c_B_in_ub = pyo.Constraint(m.B, m.K, rule=boiler_in_ub)
+
+    # CHPs: linearized thermal and electrical outputs
+    def chp_heat(m, i, k):
+        return m.Qout_CHP[i, k] == slope_Q * m.Qin_CHP[i, k]
+    m.c_CHP_th = pyo.Constraint(m.CHP, m.K, rule=chp_heat)
+
+    def chp_power(m, i, k):
+        return m.Pout_CHP[i, k] == slope_P * m.Qin_CHP[i, k]
+    m.c_CHP_el = pyo.Constraint(m.CHP, m.K, rule=chp_power)
+
+    def chp_in_ub(m, i, k):
+        return m.Qin_CHP[i, k] <= Q_out_nom_CHP / eta_nom_CHP_th
+    m.c_CHP_in_ub = pyo.Constraint(m.CHP, m.K, rule=chp_in_ub)
+
+    _op = (lambda lhs, rhs: lhs == rhs) if strict_demand_satisfaction else (lambda lhs, rhs: lhs >= rhs)
+
+    def heat_balance(m, k):
+        return _op(
+            sum(m.Qout_CHP[i, k] for i in m.CHP) + sum(m.Qout_B[i, k] for i in m.B)
+            + m.Qout_TES[k] - m.Qin_TES[k],
+            m.Q_D[k],
+        )
+    m.c_heat = pyo.Constraint(m.K, rule=heat_balance)
+
+    def elec_balance(m, k):
+        return _op(sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k], m.P_D[k])
+    m.c_elec = pyo.Constraint(m.K, rule=elec_balance)
+
+    return m
+
+
+def _build_lp_upper_fixed(
+        Q_D,
+        P_D,
+        c_g: float,
+        c_el: float,
+        dB_fixed: dict,
+        dCHP_fixed: dict,
+        din_fixed: dict,
+        dout_fixed: dict,
+        *,
+        strict_demand_satisfaction: bool = True,
+) -> pyo.ConcreteModel:
+    """
+    Builds the LP upper-bound model with pre-fixed unit-commitment binary values.
+    :param dB_fixed:   {(i, k): float}  boiler commitment schedule
+    :param dCHP_fixed: {(i, k): float}  CHP commitment schedule
+    :param din_fixed:  {k: float}       TES charge permission schedule
+    :param dout_fixed: {k: float}       TES discharge permission schedule
+    """
+    Q_D_arr = np.asarray(Q_D, dtype=float)
+    P_D_arr = np.asarray(P_D, dtype=float)
+    n = len(Q_D_arr)
+
+    m = pyo.ConcreteModel(name="LP_upper")
+    m.K   = pyo.RangeSet(0, n - 1)
+    m.B   = pyo.Set(initialize=[1, 2])
+    m.CHP = pyo.Set(initialize=[1, 2])
+
+    m.c_g  = pyo.Param(initialize=c_g)
+    m.c_el = pyo.Param(initialize=c_el)
+    m.Q_D  = pyo.Param(m.K, initialize={k: Q_D_arr[k] for k in range(n)})
+    m.P_D  = pyo.Param(m.K, initialize={k: P_D_arr[k] for k in range(n)})
+
+    # Continuous decision variables
+    m.Qin_B    = pyo.Var(m.B,   m.K, domain=pyo.NonNegativeReals)
+    m.Qin_CHP  = pyo.Var(m.CHP, m.K, domain=pyo.NonNegativeReals)
+    m.Qin_TES  = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+    m.Qout_TES = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+    m.Pgrid    = pyo.Var(m.K,   domain=pyo.NonNegativeReals)
+
+    # Auxiliary variables
+    m.E_TES    = pyo.Var(m.K,   domain=pyo.NonNegativeReals, bounds=(E_min_TES, E_nom_TES))
+    m.Qout_B   = pyo.Var(m.B,   m.K, domain=pyo.Reals)
+    m.Qout_CHP = pyo.Var(m.CHP, m.K, domain=pyo.Reals)
+    m.Pout_CHP = pyo.Var(m.CHP, m.K, domain=pyo.Reals)
+
+    def obj_rule(m):
+        return (
+            m.c_g  * DELTA_T * sum(sum(m.Qin_B[i, k] for i in m.B) + sum(m.Qin_CHP[i, k] for i in m.CHP) for k in m.K)
+            + m.c_el * DELTA_T * sum(m.Pgrid[k] for k in m.K)
+        )
+    m.OBJ = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
+
+    # TES (fixed commitment upper bounds)
+    def tes_dyn(m, k):
+        return m.E_TES[(k + 1) % n] == a_TES * m.E_TES[k] + b1_TES * m.Qin_TES[k] + b2_TES * m.Qout_TES[k]
+    m.c_TES_dyn = pyo.Constraint(m.K, rule=tes_dyn)
+
+    def tes_in_ub(m, k):
+        return m.Qin_TES[k] <= din_fixed[k] * E_nom_TES / tau_in
+    m.c_TES_in_ub = pyo.Constraint(m.K, rule=tes_in_ub)
+
+    def tes_out_ub(m, k):
+        return m.Qout_TES[k] <= dout_fixed[k] * E_nom_TES / tau_out
+    m.c_TES_out_ub = pyo.Constraint(m.K, rule=tes_out_ub)
+
+    # Boilers (fixed commitment)
+    def boiler_pl(m, i, k):
+        d = dB_fixed[i, k]
+        return m.Qout_B[i, k] == Q_out_nom_B * (
+            d * lambda_out_min_B
+            + (1.0 / beta_B) * (m.Qin_B[i, k] * eta_nom_B / Q_out_nom_B - d * lambda_in_min_B)
+        )
+    m.c_B_pl = pyo.Constraint(m.B, m.K, rule=boiler_pl)
+
+    def boiler_in_ub(m, i, k):
+        return m.Qin_B[i, k] <= dB_fixed[i, k] * Q_out_nom_B / eta_nom_B
+    m.c_B_in_ub = pyo.Constraint(m.B, m.K, rule=boiler_in_ub)
+
+    def boiler_in_lb(m, i, k):
+        return m.Qin_B[i, k] >= dB_fixed[i, k] * lambda_in_min_B * Q_out_nom_B / eta_nom_B
+    m.c_B_in_lb = pyo.Constraint(m.B, m.K, rule=boiler_in_lb)
+
+    # CHPs (fixed commitment)
+    def chp_th_pl(m, i, k):
+        d = dCHP_fixed[i, k]
+        return m.Qout_CHP[i, k] == Q_out_nom_CHP * (
+            d * lambda_out_min_CHP_th
+            + (1.0 / beta_CHP_th) * (m.Qin_CHP[i, k] * eta_nom_CHP_th / Q_out_nom_CHP - d * lambda_in_min_CHP)
+        )
+    m.c_CHP_th = pyo.Constraint(m.CHP, m.K, rule=chp_th_pl)
+
+    def chp_el_pl(m, i, k):
+        d = dCHP_fixed[i, k]
+        return m.Pout_CHP[i, k] == P_out_nom_CHP * (
+            d * lambda_out_min_CHP_el
+            + (1.0 / beta_CHP_el) * (m.Qin_CHP[i, k] * eta_nom_CHP_el / P_out_nom_CHP - d * lambda_in_min_CHP)
+        )
+    m.c_CHP_el = pyo.Constraint(m.CHP, m.K, rule=chp_el_pl)
+
+    def chp_in_ub(m, i, k):
+        return m.Qin_CHP[i, k] <= dCHP_fixed[i, k] * Q_out_nom_CHP / eta_nom_CHP_th
+    m.c_CHP_in_ub = pyo.Constraint(m.CHP, m.K, rule=chp_in_ub)
+
+    def chp_in_lb(m, i, k):
+        return m.Qin_CHP[i, k] >= dCHP_fixed[i, k] * lambda_in_min_CHP * P_out_nom_CHP / eta_nom_CHP_el
+    m.c_CHP_in_lb = pyo.Constraint(m.CHP, m.K, rule=chp_in_lb)
+
+    _op = (lambda lhs, rhs: lhs == rhs) if strict_demand_satisfaction else (lambda lhs, rhs: lhs >= rhs)
+
+    def heat_balance(m, k):
+        return _op(
+            sum(m.Qout_CHP[i, k] for i in m.CHP) + sum(m.Qout_B[i, k] for i in m.B)
+            + m.Qout_TES[k] - m.Qin_TES[k],
+            m.Q_D[k],
+        )
+    m.c_heat = pyo.Constraint(m.K, rule=heat_balance)
+
+    def elec_balance(m, k):
+        return _op(sum(m.Pout_CHP[i, k] for i in m.CHP) + m.Pgrid[k], m.P_D[k])
+    m.c_elec = pyo.Constraint(m.K, rule=elec_balance)
+
+    return m
+
+
+# == Solve wrapper helpers =====================================================
+
+def _extract_lp_solution(
+        m: pyo.ConcreteModel,
+        dB_sched=None,
+        dCHP_sched=None,
+        din_sched=None,
+        dout_sched=None,
+) -> pd.DataFrame:
+    """
+    Extract LP model solution into a Marius-format DataFrame.
+    Pass *_sched dicts/callables for LP upper (fixed binaries) or LP lower
+    (pass None to read from model variables m.dB, m.dCHP, m.din_TES, m.dout_TES).
+    """
+    rows = []
+    has_delta_vars = hasattr(m, "dB")
+    for k in m.K:
+        row = {
+            "k":        k,
+            "Q_D":      pyo.value(m.Q_D[k]),
+            "P_D":      pyo.value(m.P_D[k]),
+            "E_TES":    pyo.value(m.E_TES[k]),
+            "Qin_TES":  pyo.value(m.Qin_TES[k]),
+            "Qout_TES": pyo.value(m.Qout_TES[k]),
+            "Pgrid":    pyo.value(m.Pgrid[k]),
+        }
+        if dB_sched is not None:
+            row["dB1"]    = dB_sched[1, k]
+            row["dB2"]    = dB_sched[2, k]
+            row["dCHP1"]  = dCHP_sched[1, k]
+            row["dCHP2"]  = dCHP_sched[2, k]
+            row["din_TES"]  = din_sched[k]
+            row["dout_TES"] = dout_sched[k]
+        elif has_delta_vars:
+            row["dB1"]    = pyo.value(m.dB[1, k])
+            row["dB2"]    = pyo.value(m.dB[2, k])
+            row["dCHP1"]  = pyo.value(m.dCHP[1, k])
+            row["dCHP2"]  = pyo.value(m.dCHP[2, k])
+            row["din_TES"]  = pyo.value(m.din_TES[k])
+            row["dout_TES"] = pyo.value(m.dout_TES[k])
+        for i in [1, 2]:
+            row[f"Qin_B{i}"]   = pyo.value(m.Qin_B[i, k])
+            row[f"Qout_B{i}"]  = pyo.value(m.Qout_B[i, k])
+            row[f"Qin_CHP{i}"] = pyo.value(m.Qin_CHP[i, k])
+            row[f"Qout_CHP{i}"]= pyo.value(m.Qout_CHP[i, k])
+            row[f"Pout_CHP{i}"]= pyo.value(m.Pout_CHP[i, k])
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def solve_milp(
+        Q_D,
+        P_D,
+        c_g: float,
+        c_el: float,
+        *,
+        mip_gap: float = 1e-3,
+        normalize: bool = False,
+        raw_normalized: bool = False,
+        strict_demand_satisfaction: bool = True,
+        tee: bool = False,
+) -> tuple[float, pd.DataFrame]:
+    """
+    Build, solve, and extract the MILP dispatch model.
+    :param Q_D: Heat demand array [kW], length N
+    :param P_D: Electrical demand array [kW], length N
+    :param c_g: Gas price [€/kWh]
+    :param c_el: Electricity price [€/kWh]
+    :param mip_gap: Gurobi MIPGap tolerance
+    :param normalize: Divide objective by c_el for better numerical scaling
+    :param raw_normalized: (only with normalize=True) return OPEX/c_el instead of OPEX
+    :param strict_demand_satisfaction: True → equality balances; False → >= inequalities
+    :param tee: Stream solver output to console
+    :return: (opex, dispatch_df) with Marius-format column names
+    """
+    Q_D_s = pd.Series(np.asarray(Q_D, dtype=float), index=range(1, N + 1))
+    P_D_s = pd.Series(np.asarray(P_D, dtype=float), index=range(1, N + 1))
+
+    m = build_milp(Q_D_s, P_D_s, c_g, c_el, normalize=normalize,
+                   strict_demand_satisfaction=strict_demand_satisfaction)
+
+    solve_model(m, MIPGap=mip_gap, TimeLimit=300, tee=tee)
+
+    raw_obj = pyo.value(m.OBJ)
+    if normalize:
+        opex = raw_obj if raw_normalized else c_el * raw_obj
+    else:
+        opex = raw_obj
+
+    rows = []
+    for k in m.K:  # k = 1..N
+        rows.append({
+            "k":         k - 1,
+            "Q_D":       pyo.value(m.Q_D[k]),
+            "P_D":       pyo.value(m.P_D[k]),
+            "E_TES":     pyo.value(m.E_TES[k]),
+            "Qin_TES":   pyo.value(m.Q_in_TES[k]),
+            "Qout_TES":  pyo.value(m.Q_out_TES[k]),
+            "Pgrid":     pyo.value(m.P_grid[k]),
+            "dB1":       pyo.value(m.delta_B[1, k]),
+            "dB2":       pyo.value(m.delta_B[2, k]),
+            "dCHP1":     pyo.value(m.delta_CHP[1, k]),
+            "dCHP2":     pyo.value(m.delta_CHP[2, k]),
+            "din_TES":   pyo.value(m.delta_in_TES[k]),
+            "dout_TES":  pyo.value(m.delta_out_TES[k]),
+            "Qin_B1":    pyo.value(m.Q_in_B[1, k]),
+            "Qin_B2":    pyo.value(m.Q_in_B[2, k]),
+            "Qout_B1":   pyo.value(m.Q_out_B[1, k]),
+            "Qout_B2":   pyo.value(m.Q_out_B[2, k]),
+            "Qin_CHP1":  pyo.value(m.Q_in_CHP[1, k]),
+            "Qin_CHP2":  pyo.value(m.Q_in_CHP[2, k]),
+            "Qout_CHP1": pyo.value(m.Q_out_CHP[1, k]),
+            "Qout_CHP2": pyo.value(m.Q_out_CHP[2, k]),
+            "Pout_CHP1": pyo.value(m.P_out_CHP[1, k]),
+            "Pout_CHP2": pyo.value(m.P_out_CHP[2, k]),
+        })
+    return opex, pd.DataFrame(rows)
+
+
+def solve_lp_lower(
+        Q_D,
+        P_D,
+        c_g: float,
+        c_el: float,
+        *,
+        strict_demand_satisfaction: bool = True,
+        tee: bool = False,
+) -> tuple[float, pd.DataFrame]:
+    """
+    Build, solve, and extract the LP lower-bound (binary-relaxation) model.
+    Returns (opex, dispatch_df) with Marius-format column names.
+    """
+    m = build_lp_lower(Q_D, P_D, c_g, c_el,
+                       strict_demand_satisfaction=strict_demand_satisfaction)
+    solve_model(m, TimeLimit=300, tee=tee)
+    return pyo.value(m.OBJ), _extract_lp_solution(m)
+
+
+def solve_lp_upper(
+        Q_D,
+        P_D,
+        c_g: float,
+        c_el: float,
+        *,
+        mode: str = "min",
+        return_both: bool = False,
+        strict_demand_satisfaction: bool = True,
+        tee: bool = False,
+) -> tuple[float, pd.DataFrame]:
+    """
+    Build, solve, and extract the LP upper-bound model.
+
+    mode='min' (default): run both 'boilers_on' and 'chp_on', return the cheaper.
+    mode='boilers_on' | 'chp_on': run that single heuristic.
+    mode='rounded': solve LP lower, round deltas, fix and re-solve as LP.
+    return_both=True: return ((opex_bo, df_bo), (opex_chp, df_chp)) regardless of mode.
+
+    Returns (nan, empty DataFrame) when the solver cannot find a feasible solution.
+    """
+    Q_D_arr = np.asarray(Q_D, dtype=float)
+    P_D_arr = np.asarray(P_D, dtype=float)
+    n = len(Q_D_arr)
+
+    def _run_single(single_mode: str):
+        if single_mode == "rounded":
+            _, lp_sol = solve_lp_lower(Q_D_arr, P_D_arr, c_g, c_el,
+                                       strict_demand_satisfaction=strict_demand_satisfaction,
+                                       tee=tee)
+            dB_f   = {(i, k): round(lp_sol.iloc[k]["dB1" if i == 1 else "dB2"])   for i in [1, 2] for k in range(n)}
+            dCHP_f = {(i, k): round(lp_sol.iloc[k]["dCHP1" if i == 1 else "dCHP2"]) for i in [1, 2] for k in range(n)}
+            din_f  = {k: round(lp_sol.iloc[k]["din_TES"])  for k in range(n)}
+            dout_f = {k: round(lp_sol.iloc[k]["dout_TES"]) for k in range(n)}
+        elif single_mode == "chp_on":
+            CHP_max_Q = Q_out_nom_CHP
+            CHP_min_Q = Q_out_nom_CHP * lambda_out_min_CHP_th
+            CHP_min_P = P_out_nom_CHP * lambda_out_min_CHP_el
+            B_max_Q   = Q_out_nom_B
+            B_min_Q   = Q_out_nom_B * lambda_out_min_B
+
+            if any(2 * CHP_max_Q < Q_D_arr[k] for k in range(n)):
+                bad = [k for k in range(n) if 2 * CHP_max_Q < Q_D_arr[k]]
+                raise ValueError(
+                    f"chp_on: combined CHP max heat ({2*CHP_max_Q:.1f} kW) "
+                    f"insufficient at timesteps {bad[:5]}{'...' if len(bad)>5 else ''}."
+                )
+
+            _chp1, _chp2, _b1, _b2 = {}, {}, {}, {}
+            for k in range(n):
+                heat_d = Q_D_arr[k]
+                pow_d  = P_D_arr[k]
+                if CHP_min_Q > heat_d or CHP_min_P > pow_d:
+                    _chp1[k] = 0.0; _chp2[k] = 0.0
+                    _b1[k] = 1.0; _b2[k] = 0.0 if 2 * B_min_Q > heat_d else 1.0
+                elif 2 * CHP_min_Q <= heat_d and 2 * CHP_min_P <= pow_d:
+                    _chp1[k] = 1.0; _chp2[k] = 1.0; _b1[k] = 0.0; _b2[k] = 0.0
+                elif CHP_max_Q >= heat_d and CHP_min_P <= pow_d:
+                    _chp1[k] = 1.0; _chp2[k] = 0.0; _b1[k] = 0.0; _b2[k] = 0.0
+                elif (CHP_max_Q + B_max_Q >= heat_d
+                      and CHP_min_Q + B_min_Q <= heat_d
+                      and CHP_min_P <= pow_d):
+                    _chp1[k] = 1.0; _chp2[k] = 0.0; _b1[k] = 1.0; _b2[k] = 0.0
+                else:
+                    _chp1[k] = 1.0; _chp2[k] = 0.0; _b1[k] = 1.0; _b2[k] = 1.0
+
+            dB_f   = {(i, k): (_b1[k] if i == 1 else _b2[k])   for i in [1, 2] for k in range(n)}
+            dCHP_f = {(i, k): (_chp1[k] if i == 1 else _chp2[k]) for i in [1, 2] for k in range(n)}
+            din_f  = {k: 1.0 if k % 2 == 0 else 0.0 for k in range(n)}
+            dout_f = {k: 0.0 if k % 2 == 0 else 1.0 for k in range(n)}
+        else:  # boilers_on
+            B_max_Q = Q_out_nom_B
+            _b1, _b2 = {}, {}
+            for k in range(n):
+                _b1[k] = 1.0
+                _b2[k] = 0.0 if B_max_Q >= Q_D_arr[k] else 1.0
+
+            dB_f   = {(i, k): (_b1[k] if i == 1 else _b2[k]) for i in [1, 2] for k in range(n)}
+            dCHP_f = {(i, k): 0.0                              for i in [1, 2] for k in range(n)}
+            din_f  = {k: 1.0 if k % 2 == 0 else 0.0 for k in range(n)}
+            dout_f = {k: 0.0 if k % 2 == 0 else 1.0 for k in range(n)}
+
+        mdl = _build_lp_upper_fixed(
+            Q_D_arr, P_D_arr, c_g, c_el,
+            dB_f, dCHP_f, din_f, dout_f,
+            strict_demand_satisfaction=strict_demand_satisfaction,
+        )
+        results = solve_model(mdl, TimeLimit=300, tee=tee)
+        tc = str(results.solver.termination_condition)
+        if tc not in ("optimal", "feasible"):
+            return float("nan"), pd.DataFrame()
+        dispatch = _extract_lp_solution(mdl, dB_f, dCHP_f, din_f, dout_f)
+        return pyo.value(mdl.OBJ), dispatch
+
+    if mode == "min" or return_both:
+        bo  = _run_single("boilers_on")
+        chp = _run_single("chp_on")
+        if return_both:
+            return bo, chp
+        bo_opex, chp_opex = bo[0], chp[0]
+        if np.isnan(bo_opex) and np.isnan(chp_opex):
+            return float("nan"), pd.DataFrame()
+        if np.isnan(bo_opex):
+            return chp
+        if np.isnan(chp_opex):
+            return bo
+        return bo if bo_opex <= chp_opex else chp
+
+    return _run_single(mode)
+
+
+def solve_lp_approximated(
+        Q_D,
+        P_D,
+        c_g: float,
+        c_el: float,
+        *,
+        mode: str = "mean_efficiency",
+        strict_demand_satisfaction: bool = True,
+        tee: bool = False,
+) -> tuple[float, pd.DataFrame]:
+    """
+    Build, solve, and extract the LP approximation model.
+    Returns (opex, dispatch_df) with Marius-format column names.
+    mode: 'fitted' or 'mean_efficiency'
+    """
+    m = build_lp_approximated(Q_D, P_D, c_g, c_el, mode=mode,
+                               strict_demand_satisfaction=strict_demand_satisfaction)
+    solve_model(m, TimeLimit=300, tee=tee)
+    return pyo.value(m.OBJ), _extract_lp_solution(m)
 

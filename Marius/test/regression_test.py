@@ -23,12 +23,15 @@ import json
 import sys
 from pathlib import Path
 
-# Ensure Marius/ is importable regardless of working directory
-sys.path.insert(0, "Marius")
+import numpy as np
+import pandas as pd
 
-import formulation_MILP as _milp
-import formulation_LP_approximated as _lp
-import formulation_LP_lower as _lp_bin
+sys.path.append("Erdem")
+from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_approximated
+
+_demand_df = pd.read_csv(Path("energy_demands.csv"))
+_Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
+_P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -36,7 +39,6 @@ import formulation_LP_lower as _lp_bin
 BASELINE_FILE = Path(__file__).parent / ".." / "results" / "regression_baselines.json"
 
 # Five price pairs spanning the interesting range of gas vs electricity costs.
-# Each triggers a meaningfully different dispatch strategy.
 PRICE_PAIRS: list[tuple[float, float]] = [
     (0.08, 0.08),   # both cheap: CHPs run flat-out, minimal grid
     (0.10, 0.25),   # cheap gas, moderate electricity: CHPs preferred
@@ -45,19 +47,14 @@ PRICE_PAIRS: list[tuple[float, float]] = [
     (0.28, 0.50),   # both expensive: tight optimisation
 ]
 
-# Hyperparameters recorded in the baseline "info" section
 MILP_MIP_GAP: float = 1e-3
 
-def _milp_solve(c_G: float, c_el: float) -> tuple[float, object]:
-    return _milp.solve(c_G, c_el, mip_gap=MILP_MIP_GAP)
-
 FORMULATIONS: dict[str, callable] = {
-    "MILP":      _milp_solve,
-    "LP":        _lp.solve,
-    "LP_binary": _lp_bin.solve,
+    "MILP":      lambda c_G, c_el: solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=MILP_MIP_GAP),
+    "LP":        lambda c_G, c_el: solve_lp_approximated(_Q_D, _P_D, c_G, c_el),
+    "LP_binary": lambda c_G, c_el: solve_lp_lower(_Q_D, _P_D, c_G, c_el),
 }
 
-# Relative tolerance per formulation
 TOLERANCES: dict[str, float] = {
     "MILP":      2e-3,
     "LP":        1e-4,
@@ -110,7 +107,6 @@ def run_regression() -> bool:
         print("Run with --generate first to create it.")
         return False
 
-    # Warn if the baseline was generated with a different MIP gap
     with open(BASELINE_FILE) as _fh:
         _info = json.load(_fh).get("info", {})
     if _info.get("MILP_mip_gap") != MILP_MIP_GAP:
@@ -140,7 +136,6 @@ def run_regression() -> bool:
             expected = baseline[name]
             tol = TOLERANCES[name]
 
-            # Relative error; guard against near-zero expected values
             rel_err = abs(opex - expected) / max(abs(expected), 1.0)
             passed = rel_err <= tol
             status = "PASS" if passed else "FAIL"

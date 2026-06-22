@@ -27,6 +27,7 @@ from sklearn.metrics import r2_score, mean_squared_error
 # ---------------------------------------------------------------------------
 # Paths / constants
 # ---------------------------------------------------------------------------
+REWRITE    = True
 CACHE_PATH   = Path("Marius/results/test_samples_true_opex.csv")
 EVAL_CSV     = Path("Marius/results/evaluation_log_samples.csv")
 TRAINING_CSV = Path("Erdem/results/Sampling/log_training_samples.csv")
@@ -53,26 +54,29 @@ test_ratios = np.sort(X_test["ratio"].values)
 # ---------------------------------------------------------------------------
 # True test values — compute once, cache for future runs
 # ---------------------------------------------------------------------------
-if CACHE_PATH.exists():
+if not REWRITE and CACHE_PATH.exists():
     print(f"Loading cached true test values from {CACHE_PATH}")
     test_true_df = pd.read_csv(CACHE_PATH)
 else:
     print("Computing true OPEX for test samples (this may take a while)…")
-    sys.path.append("Marius")
-    from formulation_MILP import solve as solve_milp
-    from formulation_LP_lower import solve as solve_lp_lower
-    from formulation_LP_upper import solve as solve_lp_upper
-    from formulation_LP_approximated import solve as solve_lp_approx
+    sys.path.append("Erdem")
+    from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_upper, solve_lp_approximated
+
+    import pandas as _pd
+    from pathlib import Path as _Path
+    _demand_df = _pd.read_csv(_Path("energy_demands.csv"))
+    _Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
+    _P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 
     c_el = 1.0
     rows = []
     for i, ratio in enumerate(test_ratios):
         c_G = ratio * c_el
         print(f"  [{i+1}/{len(test_ratios)}] ratio={ratio:.6f}")
-        opex_milp   = solve_milp(c_G, c_el, mip_gap=1e-2)[0]
-        opex_lower  = solve_lp_lower(c_G, c_el)[0]
-        opex_upper  = solve_lp_upper(c_G, c_el)[0]
-        opex_approx = solve_lp_approx(c_G, c_el, mode="mean_efficiency")[0]
+        opex_milp   = solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=1e-2)[0]
+        opex_lower  = solve_lp_lower(_Q_D, _P_D, c_G, c_el)[0]
+        opex_upper  = solve_lp_upper(_Q_D, _P_D, c_G, c_el)[0]
+        opex_approx = solve_lp_approximated(_Q_D, _P_D, c_G, c_el, mode="mean_efficiency")[0]
         rows.append({
             "ratio":          ratio,
             "opex_milp":      opex_milp,

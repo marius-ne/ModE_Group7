@@ -2,12 +2,14 @@ import sys
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from pathlib import Path
 
-sys.path.append("Marius")
-from formulation_MILP import solve
-from formulation_LP_lower import solve as solve_lp_lower
-from formulation_LP_upper import solve as solve_lp_upper
-from formulation_LP_approximated import solve as solve_lp_approx
+sys.path.append("Erdem")
+from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_upper, solve_lp_approximated
+
+_demand_df = pd.read_csv(Path("energy_demands.csv"))
+_Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
+_P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 
 c_el = 1.0
 strict_demand_satisfaction = True
@@ -19,10 +21,10 @@ for i, ratio in enumerate(ratios):
     c_G = c_el * ratio
     print(f"[{i+1}/{len(ratios)}] ratio={ratio:.6f}  c_G={c_G:.6f}")
 
-    opex_milp   = solve(c_G, c_el, mip_gap=1e-2, strict_demand_satisfaction=strict_demand_satisfaction)[0]
-    opex_lower  = solve_lp_lower(c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
-    opex_upper  = solve_lp_upper(c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
-    opex_approx = solve_lp_approx(c_G, c_el, mode="mean_efficiency", strict_demand_satisfaction=strict_demand_satisfaction)[0]
+    opex_milp   = solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=1e-2, strict_demand_satisfaction=strict_demand_satisfaction)[0]
+    opex_lower  = solve_lp_lower(_Q_D, _P_D, c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
+    opex_upper  = solve_lp_upper(_Q_D, _P_D, c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
+    opex_approx = solve_lp_approximated(_Q_D, _P_D, c_G, c_el, mode="mean_efficiency", strict_demand_satisfaction=strict_demand_satisfaction)[0]
 
     rows.append({
         "ratio":         ratio,
