@@ -1082,13 +1082,48 @@ def solve_lp_upper(
 ) -> tuple[float, pd.DataFrame]:
     """
     Build, solve, and extract the LP upper-bound model.
+    Returns (opex, dispatch_df) with Marius-format column names.
 
+    Modes
+    -----
     mode='min' (default): run both 'boilers_on' and 'chp_on', return the cheaper.
     mode='boilers_on' | 'chp_on': run that single heuristic.
     mode='rounded': solve LP lower, round deltas, fix and re-solve as LP.
     return_both=True: return ((opex_bo, df_bo), (opex_chp, df_chp)) regardless of mode.
-
     Returns (nan, empty DataFrame) when the solver cannot find a feasible solution.
+
+    chp_on heuristic — decision rules (evaluated per timestep, first match wins)
+    ----------------------------------------------------------------------------
+    Notation:
+        CHP_max_Q = Q_out_nom_CHP                       max CHP thermal output per unit [kW]
+        CHP_min_Q = Q_out_nom_CHP · λ_out_min_CHP_th   min CHP thermal output per unit [kW]
+        CHP_min_P = P_out_nom_CHP · λ_out_min_CHP_el   min CHP electrical output per unit [kW]
+        B_max_Q   = Q_out_nom_B                         max boiler thermal output [kW]
+        B_min_Q   = Q_out_nom_B · λ_out_min_B           min boiler thermal output [kW]
+
+    I.  CHP_min_Q > Q_D  OR  CHP_min_P > P_D
+        Demand is below the minimum feasible CHP output (thermal or electrical).
+        → CHP1=0, CHP2=0, B1=1, B2=(1 if 2·B_min_Q ≤ Q_D else 0).
+
+    II. 2·CHP_min_Q ≤ Q_D  AND  2·CHP_min_P ≤ P_D
+        Demand is large enough that both CHPs can run at minimum load.
+        → CHP1=1, CHP2=1, B1=0, B2=0.
+
+    III. CHP_max_Q ≥ Q_D  AND  CHP_min_P ≤ P_D
+        One CHP alone can cover all heat demand.
+        → CHP1=1, CHP2=0, B1=0, B2=0.
+
+    IV. CHP_max_Q + B_max_Q ≥ Q_D  AND  CHP_min_Q + B_min_Q ≤ Q_D  AND  CHP_min_P ≤ P_D
+        Demand falls within the combined feasible range of one CHP and one boiler.
+        → CHP1=1, CHP2=0, B1=1, B2=0.
+
+    V.  (all remaining cases)
+        One CHP and two boilers needed.
+        → CHP1=1, CHP2=0, B1=1, B2=1.
+
+    boilers_on heuristic
+    --------------------
+    CHPs always off. B1 always on. B2=1 if B_max_Q < Q_D, else B2=0.
     """
     Q_D_arr = np.asarray(Q_D, dtype=float)
     P_D_arr = np.asarray(P_D, dtype=float)
