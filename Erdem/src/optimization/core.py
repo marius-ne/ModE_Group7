@@ -1092,38 +1092,61 @@ def solve_lp_upper(
     return_both=True: return ((opex_bo, df_bo), (opex_chp, df_chp)) regardless of mode.
     Returns (nan, empty DataFrame) when the solver cannot find a feasible solution.
 
-    chp_on heuristic — decision rules (evaluated per timestep, first match wins)
-    ----------------------------------------------------------------------------
+    chp_on heuristic — decision rules (evaluated per timestep, if/elif chain)
+    --------------------------------------------------------------------------
     Notation:
-        CHP_max_Q = Q_out_nom_CHP                       max CHP thermal output per unit [kW]
-        CHP_min_Q = Q_out_nom_CHP · λ_out_min_CHP_th   min CHP thermal output per unit [kW]
-        CHP_min_P = P_out_nom_CHP · λ_out_min_CHP_el   min CHP electrical output per unit [kW]
-        B_max_Q   = Q_out_nom_B                         max boiler thermal output [kW]
-        B_min_Q   = Q_out_nom_B · λ_out_min_B           min boiler thermal output [kW]
+        CHP_max_Q = Q_out_nom_CHP                         max CHP thermal output per unit [kW]
+        CHP_min_Q = Q_out_nom_CHP · λ_out_min_CHP_th     min CHP thermal output per unit [kW]
+        CHP_max_P = P_out_nom_CHP                         max CHP electrical output per unit [kW]
+        CHP_min_P = P_out_nom_CHP · λ_out_min_CHP_el     min CHP electrical output per unit [kW]
+        B_max_Q   = Q_out_nom_B                           max boiler thermal output [kW]
+        B_min_Q   = Q_out_nom_B · λ_out_min_B            min boiler thermal output [kW]
 
-    I.  CHP_min_Q > Q_D  OR  CHP_min_P > P_D
-        Demand is below the minimum feasible CHP output (thermal or electrical).
-        → CHP1=0, CHP2=0, B1=1, B2=(1 if 2·B_min_Q ≤ Q_D else 0).
-
-    II. 2·CHP_min_Q ≤ Q_D  AND  2·CHP_min_P ≤ P_D
-        Demand is large enough that both CHPs can run at minimum load.
+    I.  2·CHP_max_Q ≥ Q_D  AND  2·CHP_min_Q ≤ Q_D  AND  2·CHP_max_P ≥ P_D  AND  2·CHP_min_P ≤ P_D
+        Both CHPs on: combined range covers both heat and power demand.
         → CHP1=1, CHP2=1, B1=0, B2=0.
 
-    III. CHP_max_Q ≥ Q_D  AND  CHP_min_P ≤ P_D
-        One CHP alone can cover all heat demand.
+    II. (2·CHP_min_Q > Q_D  OR  2·CHP_min_P > P_D)  AND  CHP_min_Q ≤ Q_D  AND  CHP_min_P ≤ P_D  AND  CHP_max_Q ≥ Q_D
+        Combined minimum exceeds demand, but single CHP is feasible: turn off CHP2.
         → CHP1=1, CHP2=0, B1=0, B2=0.
 
-    IV. CHP_max_Q + B_max_Q ≥ Q_D  AND  CHP_min_Q + B_min_Q ≤ Q_D  AND  CHP_min_P ≤ P_D
-        Demand falls within the combined feasible range of one CHP and one boiler.
-        → CHP1=1, CHP2=0, B1=1, B2=0.
+    III. 2·CHP_max_Q < Q_D  (heat only)
+        Combined CHP max insufficient for heat: add one or two boilers.
+        → CHP1=1, CHP2=1, B1=1, B2=(1 if 2·CHP_max_Q + B_max_Q < Q_D else 0).
 
-    V.  (all remaining cases)
-        One CHP and two boilers needed.
-        → CHP1=1, CHP2=0, B1=1, B2=1.
+    IV. CHP_max_Q < Q_D  AND  CHP_min_Q + B_min_Q ≤ Q_D  (heat only)
+        Single CHP max insufficient; combined min guard satisfied: add one or two boilers.
+        → CHP1=1, CHP2=0, B1=1, B2=(1 if CHP_max_Q + B_max_Q < Q_D else 0).
 
-    boilers_on heuristic
-    --------------------
-    CHPs always off. B1 always on. B2=1 if B_max_Q < Q_D, else B2=0.
+    V.  CHP_min_Q > Q_D  OR  CHP_min_P > P_D
+        Single CHP minimum overproduces: replace with boilers.
+        → CHP1=0, CHP2=0, B1=1, B2=(0 or 1 based on boiler feasibility range).
+
+    Raises ValueError if no case applies.
+
+    boilers_on heuristic — decision rules (evaluated per timestep, if/elif chain)
+    -------------------------------------------------------------------------------
+    I.  2·B_max_Q ≥ Q_D  AND  2·B_min_Q ≤ Q_D  (heat only)
+        Both boilers on: combined range covers heat demand.
+        → B1=1, B2=1, CHP1=0, CHP2=0.
+
+    II. 2·B_min_Q > Q_D  AND  B_min_Q ≤ Q_D  AND  B_max_Q ≥ Q_D  (heat only)
+        Combined min exceeds demand, but single boiler is feasible: turn off B2.
+        → B1=1, B2=0, CHP1=0, CHP2=0.
+
+    III. 2·B_max_Q < Q_D  (heat only)
+        Combined boiler max insufficient for heat: add one or two CHPs.
+        → B1=1, B2=1, CHP1=1, CHP2=(1 if 2·B_max_Q + CHP_max_Q < Q_D else 0).
+
+    IV. B_max_Q < Q_D  AND  B_min_Q + CHP_min_Q ≤ Q_D  (heat only)
+        Single boiler max insufficient; combined min guard satisfied: add one or two CHPs.
+        → B1=1, B2=0, CHP1=1, CHP2=(1 if B_max_Q + CHP_max_Q < Q_D else 0).
+
+    V.  B_min_Q > Q_D  (heat only)
+        Single boiler minimum overproduces: replace with CHPs.
+        → B1=0, B2=0, CHP1=1, CHP2=(0 or 1 based on CHP feasibility range).
+
+    Raises ValueError if no case applies.
     """
     Q_D_arr = np.asarray(Q_D, dtype=float)
     P_D_arr = np.asarray(P_D, dtype=float)
@@ -1141,48 +1164,117 @@ def solve_lp_upper(
         elif single_mode == "chp_on":
             CHP_max_Q = Q_out_nom_CHP
             CHP_min_Q = Q_out_nom_CHP * lambda_out_min_CHP_th
+            CHP_max_P = P_out_nom_CHP
             CHP_min_P = P_out_nom_CHP * lambda_out_min_CHP_el
             B_max_Q   = Q_out_nom_B
             B_min_Q   = Q_out_nom_B * lambda_out_min_B
-
-            if any(2 * CHP_max_Q < Q_D_arr[k] for k in range(n)):
-                bad = [k for k in range(n) if 2 * CHP_max_Q < Q_D_arr[k]]
-                raise ValueError(
-                    f"chp_on: combined CHP max heat ({2*CHP_max_Q:.1f} kW) "
-                    f"insufficient at timesteps {bad[:5]}{'...' if len(bad)>5 else ''}."
-                )
 
             _chp1, _chp2, _b1, _b2 = {}, {}, {}, {}
             for k in range(n):
                 heat_d = Q_D_arr[k]
                 pow_d  = P_D_arr[k]
-                if CHP_min_Q > heat_d or CHP_min_P > pow_d:
-                    _chp1[k] = 0.0; _chp2[k] = 0.0
-                    _b1[k] = 1.0; _b2[k] = 0.0 if 2 * B_min_Q > heat_d else 1.0
-                elif 2 * CHP_min_Q <= heat_d and 2 * CHP_min_P <= pow_d:
-                    _chp1[k] = 1.0; _chp2[k] = 1.0; _b1[k] = 0.0; _b2[k] = 0.0
-                elif CHP_max_Q >= heat_d and CHP_min_P <= pow_d:
-                    _chp1[k] = 1.0; _chp2[k] = 0.0; _b1[k] = 0.0; _b2[k] = 0.0
-                elif (CHP_max_Q + B_max_Q >= heat_d
-                      and CHP_min_Q + B_min_Q <= heat_d
-                      and CHP_min_P <= pow_d):
-                    _chp1[k] = 1.0; _chp2[k] = 0.0; _b1[k] = 1.0; _b2[k] = 0.0
-                else:
-                    _chp1[k] = 1.0; _chp2[k] = 0.0; _b1[k] = 1.0; _b2[k] = 1.0
 
-            dB_f   = {(i, k): (_b1[k] if i == 1 else _b2[k])   for i in [1, 2] for k in range(n)}
+                # Case I: combined CHP range covers both heat and power demand
+                if (2*CHP_max_Q >= heat_d and 2*CHP_min_Q <= heat_d and
+                        2*CHP_max_P >= pow_d  and 2*CHP_min_P <= pow_d):
+                    chp1, chp2, b1, b2 = 1, 1, 0, 0
+
+                # Case II: combined min exceeds demand, but single CHP is feasible → CHP1 only
+                elif ((2*CHP_min_Q > heat_d or 2*CHP_min_P > pow_d)
+                      and CHP_min_Q <= heat_d and CHP_min_P <= pow_d and CHP_max_Q >= heat_d):
+                    chp1, chp2, b1, b2 = 1, 0, 0, 0
+
+                # Case III: combined CHP max below heat demand → add 1 or 2 boilers (heat only)
+                elif 2*CHP_max_Q < heat_d:
+                    chp1, chp2, b1 = 1, 1, 1
+                    b2 = 1 if 2*CHP_max_Q + B_max_Q < heat_d else 0
+
+                # Case IV: single CHP max below heat demand, combined min fits → CHP1 + 1 or 2 boilers (heat only)
+                elif CHP_max_Q < heat_d and CHP_min_Q + B_min_Q <= heat_d:
+                    chp1, chp2, b1 = 1, 0, 1
+                    b2 = 1 if CHP_max_Q + B_max_Q < heat_d else 0
+
+                # Case V: single CHP min overproduces heat or power → replace with 1 or 2 boilers
+                elif CHP_min_Q > heat_d or CHP_min_P > pow_d:
+                    chp1, chp2 = 0, 0
+                    if B_min_Q <= heat_d <= B_max_Q:
+                        b1, b2 = 1, 0
+                    elif 2*B_min_Q <= heat_d <= 2*B_max_Q:
+                        b1, b2 = 1, 1
+                    else:
+                        raise ValueError(
+                            f"chp_on Case V: no boiler configuration covers timestep k={k} "
+                            f"(Q_D={heat_d:.1f} kW, B_min={B_min_Q:.1f}, B_max={B_max_Q:.1f})"
+                        )
+
+                else:
+                    raise ValueError(
+                        f"chp_on: no heuristic case covers timestep k={k} "
+                        f"(Q_D={heat_d:.1f} kW, P_D={pow_d:.1f} kW)"
+                    )
+
+                _chp1[k] = float(chp1); _chp2[k] = float(chp2)
+                _b1[k]   = float(b1);   _b2[k]   = float(b2)
+
+            dB_f   = {(i, k): (_b1[k] if i == 1 else _b2[k])    for i in [1, 2] for k in range(n)}
             dCHP_f = {(i, k): (_chp1[k] if i == 1 else _chp2[k]) for i in [1, 2] for k in range(n)}
             din_f  = {k: 1.0 if k % 2 == 0 else 0.0 for k in range(n)}
             dout_f = {k: 0.0 if k % 2 == 0 else 1.0 for k in range(n)}
         else:  # boilers_on
-            B_max_Q = Q_out_nom_B
-            _b1, _b2 = {}, {}
-            for k in range(n):
-                _b1[k] = 1.0
-                _b2[k] = 0.0 if B_max_Q >= Q_D_arr[k] else 1.0
+            B_max_Q   = Q_out_nom_B
+            B_min_Q   = Q_out_nom_B * lambda_out_min_B
+            CHP_max_Q = Q_out_nom_CHP
+            CHP_min_Q = Q_out_nom_CHP * lambda_out_min_CHP_th
+            CHP_max_P = P_out_nom_CHP
+            CHP_min_P = P_out_nom_CHP * lambda_out_min_CHP_el
 
-            dB_f   = {(i, k): (_b1[k] if i == 1 else _b2[k]) for i in [1, 2] for k in range(n)}
-            dCHP_f = {(i, k): 0.0                              for i in [1, 2] for k in range(n)}
+            _b1, _b2, _chp1, _chp2 = {}, {}, {}, {}
+            for k in range(n):
+                heat_d = Q_D_arr[k]
+                pow_d  = P_D_arr[k]
+
+                # Case I: combined boiler range covers heat demand (heat only)
+                if 2*B_max_Q >= heat_d and 2*B_min_Q <= heat_d:
+                    b1, b2, chp1, chp2 = 1, 1, 0, 0
+
+                # Case II: combined min exceeds demand, but single boiler is feasible → B1 only
+                elif 2*B_min_Q > heat_d and B_min_Q <= heat_d and B_max_Q >= heat_d:
+                    b1, b2, chp1, chp2 = 1, 0, 0, 0
+
+                # Case III: combined boiler max below heat demand → add 1 or 2 CHPs (heat only)
+                elif 2*B_max_Q < heat_d:
+                    b1, b2, chp1 = 1, 1, 1
+                    chp2 = 1 if 2*B_max_Q + CHP_max_Q < heat_d else 0
+
+                # Case IV: single boiler max below heat demand, combined min fits → B1 + 1 or 2 CHPs (heat only)
+                elif B_max_Q < heat_d and B_min_Q + CHP_min_Q <= heat_d:
+                    b1, b2, chp1 = 1, 0, 1
+                    chp2 = 1 if B_max_Q + CHP_max_Q < heat_d else 0
+
+                # Case V: single boiler min overproduces heat → replace with 1 or 2 CHPs
+                elif B_min_Q > heat_d:
+                    b1, b2 = 0, 0
+                    if CHP_min_Q <= heat_d <= CHP_max_Q:
+                        chp1, chp2 = 1, 0
+                    elif 2*CHP_min_Q <= heat_d <= 2*CHP_max_Q:
+                        chp1, chp2 = 1, 1
+                    else:
+                        raise ValueError(
+                            f"boilers_on Case V: no CHP configuration covers timestep k={k} "
+                            f"(Q_D={heat_d:.1f} kW, CHP_min={CHP_min_Q:.1f}, CHP_max={CHP_max_Q:.1f})"
+                        )
+
+                else:
+                    raise ValueError(
+                        f"boilers_on: no heuristic case covers timestep k={k} "
+                        f"(Q_D={heat_d:.1f} kW, P_D={pow_d:.1f} kW)"
+                    )
+
+                _b1[k]   = float(b1);   _b2[k]   = float(b2)
+                _chp1[k] = float(chp1); _chp2[k] = float(chp2)
+
+            dB_f   = {(i, k): (_b1[k] if i == 1 else _b2[k])    for i in [1, 2] for k in range(n)}
+            dCHP_f = {(i, k): (_chp1[k] if i == 1 else _chp2[k]) for i in [1, 2] for k in range(n)}
             din_f  = {k: 1.0 if k % 2 == 0 else 0.0 for k in range(n)}
             dout_f = {k: 0.0 if k % 2 == 0 else 1.0 for k in range(n)}
 

@@ -123,7 +123,7 @@ opex_lp_upper_min_values    = np.fmin(opex_lp_upper_bo_values, opex_lp_upper_chp
 # which would place LP_upper below the solver's own lower bound — a genuine error.
 _MIP_GAP = 1e-2
 _fin = np.isfinite(opex_milp_values) & np.isfinite(opex_lp_lower_values) & np.isfinite(opex_lp_upper_min_values)
-_lower_violations = np.where(_fin & (opex_lp_lower_values > opex_milp_values))[0]
+_lower_violations = np.where(_fin & (opex_lp_lower_values > opex_milp_values * (1 + 1e-6)))[0]
 _upper_violations = np.where(_fin & (opex_lp_upper_min_values < opex_milp_values * (1 - _MIP_GAP)))[0]
 if len(_lower_violations):
     print(f"ERROR: LP lower bound exceeds MILP at {len(_lower_violations)} point(s):")
@@ -277,3 +277,17 @@ plt.tight_layout()
 # Save the figure
 fig.savefig("Marius/visualization/opex_vs_price_ratio.png", dpi=300)
 plt.close()
+
+# --- Standalone delta-sums plot ---
+fig_ds, ax_ds = plt.subplots(figsize=(9, 4))
+ax_ds.plot(price_ratios, sum_dB_values,   color=C_DB,   linewidth=1.5, marker="^", markersize=MS, label=r"$\sum \delta_{\mathrm{B}}$")
+ax_ds.plot(price_ratios, sum_dCHP_values, color=C_DCHP, linewidth=1.5, marker="v", markersize=MS, label=r"$\sum \delta_{\mathrm{CHP}}$")
+ax_ds.set_xscale("log")
+ax_ds.set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$", fontsize=12)
+ax_ds.set_ylabel(r"$\sum \delta\;[-]$", fontsize=12)
+ax_ds.set_title(r"MILP Commitment: $\sum \delta_{\mathrm{B}}$ and $\sum \delta_{\mathrm{CHP}}$ vs Price Ratio")
+ax_ds.legend(**LEGEND_KW)
+ax_ds.grid(True, which="both", ls="--", alpha=0.5)
+fig_ds.tight_layout()
+fig_ds.savefig("Marius/visualization/delta_sums_vs_price_ratio.png", dpi=300)
+plt.close(fig_ds)

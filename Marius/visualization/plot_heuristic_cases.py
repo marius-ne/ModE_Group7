@@ -1,149 +1,187 @@
-"""Three-panel bar chart illustrating the chp_on heuristic output capacity ranges."""
+"""Abstract schematic of chp_on and boilers_on heuristic decision cases."""
 
-import sys
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+from matplotlib.transforms import blended_transform_factory
 from pathlib import Path
 
-sys.path.append("Erdem")
-from src.optimization.core import (
-    Q_out_nom_B, lambda_out_min_B,
-    Q_out_nom_CHP, P_out_nom_CHP,
-    lambda_out_min_CHP_th, lambda_out_min_CHP_el,
-)
+_ROMAN = ["I", "II", "III", "IV", "V"]
+_D     = 1.0
 
-_B_min   = Q_out_nom_B   * lambda_out_min_B
-_B_max   = Q_out_nom_B
-_CQ_min  = Q_out_nom_CHP * lambda_out_min_CHP_th
-_CQ_max  = Q_out_nom_CHP
-_CP_min  = P_out_nom_CHP * lambda_out_min_CHP_el
-_CP_max  = P_out_nom_CHP
-
-# Combined output range [min, max] per case I–V
-#   I:   B1,            no CHPs
-#   II:  CHP1+CHP2,     no boilers
-#   III: CHP1,          no boilers
-#   IV:  CHP1 + B1
-#   V:   CHP1 + B1 + B2
-_B_LO  = np.array([_B_min,      0.0,          0.0,         _B_min,      2*_B_min])
-_B_HI  = np.array([_B_max,      0.0,          0.0,         _B_max,      2*_B_max])
-_CQ_LO = np.array([0.0,         2*_CQ_min,    _CQ_min,     _CQ_min,     _CQ_min])
-_CQ_HI = np.array([0.0,         2*_CQ_max,    _CQ_max,     _CQ_max,     _CQ_max])
-_CP_LO = np.array([0.0,         2*_CP_min,    _CP_min,     _CP_min,     _CP_min])
-_CP_HI = np.array([0.0,         2*_CP_max,    _CP_max,     _CP_max,     _CP_max])
-
-_C_FEASIBLE   = "#4DAC26"
-_C_INFEASIBLE = "#D6604D"
-_C_ZERO       = "#CCCCCC"
-_C_DEMAND     = "#111111"
-_ROMAN        = ["I", "II", "III", "IV", "V"]
+_GREEN = "#2E7D32"
+_RED   = "#D6604D"
+_ORG   = "#F4A261"
+_NR_C  = "#D0D0D0"
+_LINE  = "#222222"
+_HALF  = "1/2"
 
 
-def _bar_colors(lo, hi, D):
-    out = []
-    for a, b in zip(lo, hi):
-        if b == 0.0:
-            out.append(_C_ZERO)
-        elif a > D:
-            out.append(_C_INFEASIBLE)
+def _b(lo, hi, col, lbl):
+    return (lo, hi, col, lbl)
+
+
+# CHP mode: heat and power trigger conditions
+# II & V share (1.15, 1.75): bar starts above demand line (min overproduces)
+# III & IV share (0.25, 0.85): bar ends below demand line (max insufficient)
+_C_CHP_HEAT = [
+    _b(0.25, 1.75, _GREEN, "2\nCHP"),
+    _b(1.15, 1.75, _RED,   "2\nCHP"),
+    _b(0.25, 0.85, _ORG,   "2\nCHP"),
+    _b(0.25, 0.85, _ORG,   "1\nCHP"),
+    _b(1.15, 1.75, _RED,   "1\nCHP"),
+]
+_C_CHP_POWER = [
+    _b(0.25, 1.75, _GREEN, "2\nCHP"),
+    _b(1.15, 1.75, _RED,   "2\nCHP"),
+    None,                               # Case III: heat-only condition
+    None,                               # Case IV: heat-only condition
+    _b(1.15, 1.75, _RED,   "1\nCHP"),
+]
+
+# Boiler mode: heat trigger condition only
+_B_BOI_HEAT = [
+    _b(0.25, 1.75, _GREEN, "2 B"),
+    _b(1.15, 1.75, _RED,   "2 B"),
+    _b(0.25, 0.85, _ORG,   "2 B"),
+    _b(0.25, 0.85, _ORG,   "1 B"),
+    _b(1.15, 1.75, _RED,   "1 B"),
+]
+
+# Delta outcomes per case I–V: (primary_sum, secondary_sum)
+# CHP mode: primary=CHP, secondary=B
+_CHP_DELTAS = [(2, 0), (1, 0), (2, _HALF), (1, _HALF), (0, _HALF)]
+# Boiler mode: primary=B, secondary=CHP
+_BOI_DELTAS = [(2, 0), (1, 0), (2, _HALF), (1, _HALF), (0, _HALF)]
+
+
+def _draw_bars(ax, bars, d_label, deltas, prim_lbl, sec_lbl, fontsize,
+               show_delta_labels=False):
+    x = np.arange(5)
+    w = 0.52
+
+    for i in range(0, 5, 2):
+        ax.axvspan(i - 0.48, i + 0.48, facecolor="#EBEBEB", alpha=1.0, zorder=0)
+
+    for i, bar in enumerate(bars):
+        if bar is None:
+            ax.bar(x[i], 0.12, bottom=_D - 0.06, width=w,
+                   color=_NR_C, alpha=0.8, edgecolor="#888888",
+                   linewidth=0.5, linestyle=":", zorder=1)
         else:
-            out.append(_C_FEASIBLE)
-    return out
+            lo, hi, color, label = bar
+            ax.bar(x[i], hi - lo, bottom=lo, width=w,
+                   color=color, alpha=0.88, edgecolor="black", linewidth=0.8, zorder=1)
+            tc = "white" if color in (_GREEN, _RED) else "#333333"
+            ax.text(x[i], hi - 0.06, label,
+                    ha="center", va="top",
+                    fontsize=fontsize - 2, color=tc, fontweight="bold", zorder=2)
+
+    ax.axhline(_D, color=_LINE, linestyle="--", linewidth=1.6, zorder=3)
+    # Demand label to the LEFT of the subplot
+    ax.text(-0.72, _D, d_label, ha="right", va="center",
+            fontsize=fontsize+2, color=_LINE, fontweight="bold", clip_on=False)
+
+    ax.set_yticks([])
+    ax.set_xticks(x)
+    ax.set_xticklabels(_ROMAN, fontsize=fontsize + 2, fontweight="bold")
+    ax.tick_params(axis="x", length=0)
+    ax.set_xlim(-0.65, 4.65)
+    ax.set_ylim(0.0, 2.1)
+    ax.spines["left"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+
+    if deltas is None:
+        return
+
+    # Blended transform: x in data coords, y in axes fraction
+    trans = blended_transform_factory(ax.transData, ax.transAxes)
+    fs_val   = fontsize + 2
+    fs_label = fontsize + 5
+
+    # Row 1: primary delta values
+    for i, (pv, _sv) in enumerate(deltas):
+        ax.text(x[i], -0.18, f"${pv}$", transform=trans,
+                ha="center", va="baseline", fontsize=fs_val, color="#333333", clip_on=False)
+
+    # Row 2: secondary delta values
+    for i, (_pv, sv) in enumerate(deltas):
+        ax.text(x[i], -0.34, f"${sv}$", transform=trans,
+                ha="center", va="baseline", fontsize=fs_val, color="#333333", clip_on=False)
+
+    if show_delta_labels:
+        l1 = f"$\\sum_i\\delta_{{\\mathrm{{{prim_lbl}}},i,k}}=$"
+        l2 = f"$\\sum_i\\delta_{{\\mathrm{{{sec_lbl}}},i,k}}=$"
+        ax.text(-0.65, -0.18, l1, transform=trans,
+                ha="right", va="baseline", fontsize=fs_label, color="#333333", clip_on=False)
+        ax.text(-0.65, -0.34, l2, transform=trans,
+                ha="right", va="baseline", fontsize=fs_label, color="#333333", clip_on=False)
+
+
+def _make_figure(bar_sets, d_labels, col_titles, deltas, prim_lbl, sec_lbl,
+                 title, fontsize):
+    n = len(bar_sets)
+    fig, axes = plt.subplots(1, n, figsize=(4 * n + 4, 5))
+    if n == 1:
+        axes = [axes]
+
+    for j, (ax, bars, d_lbl, col_title) in enumerate(
+        zip(axes, bar_sets, d_labels, col_titles)
+    ):
+        is_first = (j == 0)
+        _draw_bars(ax, bars, d_lbl,
+                   deltas=deltas,
+                   prim_lbl=prim_lbl, sec_lbl=sec_lbl,
+                   fontsize=fontsize,
+                   show_delta_labels=is_first)
+        ax.set_title(col_title, fontsize=fontsize, pad=8, fontweight="bold")
+
+    fig.suptitle(title, fontsize=fontsize + 4)
+    fig.subplots_adjust(bottom=0.34, top=0.85, wspace=0.22)
+    return fig
 
 
 def plot_heuristic_cases(
-    D_B:  float = 350.0,
-    D_CH: float = 350.0,
-    D_CE: float = 220.0,
-    output_path: str | None = None,
+    output_dir: str | None = None,
     fontsize: int = 11,
-) -> Path:
-    """Three-panel bar chart of output capacity ranges for the five chp_on cases.
+) -> tuple[Path, Path]:
+    base = Path(output_dir) if output_dir else Path("Marius/visualization")
+    base.mkdir(parents=True, exist_ok=True)
 
-    Left:   boiler heat output [kW]
-    Middle: CHP heat output [kW]
-    Right:  CHP electrical output [kW]
-
-    Each bar spans [min_combined, max_combined] for the committed units in that
-    case.  A constant demand line D shows whether a configuration is feasible
-    (D inside the bar) or infeasible (min > D, bar entirely above the line).
-
-    Parameters
-    ----------
-    D_B:  heat demand reference line for the boiler subplot [kW]
-    D_CH: heat demand reference line for the CHP heat subplot [kW]
-    D_CE: electrical demand reference line for the CHP elec subplot [kW]
-    """
-    if output_path is None:
-        output_path = "Marius/visualization/lp_upper_heuristic_cases.png"
-
-    x = np.arange(5)
-    w = 0.55
-
-    panels = [
-        ("Boiler heat output [kW]",      _B_LO,  _B_HI,  D_B),
-        ("CHP heat output [kW]",         _CQ_LO, _CQ_HI, D_CH),
-        ("CHP electrical output [kW]",   _CP_LO, _CP_HI, D_CE),
-    ]
-
-    fig, axes = plt.subplots(1, 3, figsize=(15, 6))
-
-    for ax, (title, lo, hi, D) in zip(axes, panels):
-        colors = _bar_colors(lo, hi, D)
-
-        for i in range(5):
-            if hi[i] > 0.0:
-                ax.bar(
-                    x[i], hi[i] - lo[i], bottom=lo[i],
-                    width=w, color=colors[i], alpha=0.82,
-                    edgecolor="black", linewidth=0.8,
-                )
-            else:
-                ax.bar(
-                    x[i], 0.8, bottom=0,
-                    width=w, color=_C_ZERO, alpha=0.55,
-                    edgecolor="black", linewidth=0.6, linestyle=":",
-                )
-
-        ax.axhline(D, color=_C_DEMAND, linestyle="--", linewidth=1.8,
-                   label=f"Demand = {D:.0f} kW", zorder=5)
-
-        ax.set_title(title, fontsize=fontsize, pad=6)
-        ax.set_xticks(x)
-        ax.set_xticklabels(_ROMAN, fontsize=fontsize + 1, fontweight="bold")
-        ax.set_xlabel("Heuristic case", fontsize=fontsize)
-        ax.set_ylabel("Output [kW]", fontsize=fontsize)
-        ax.tick_params(labelsize=fontsize - 1)
-        ax.legend(fontsize=fontsize - 1, loc="upper right")
-        ax.grid(True, axis="y", linestyle=":", alpha=0.4)
-        ax.set_xlim(-0.65, 4.65)
-        ax.set_ylim(bottom=0)
-
-    legend_handles = [
-        mpatches.Patch(facecolor=_C_FEASIBLE,   edgecolor="black", alpha=0.85,
-                       label=r"Feasible: $Q_\mathrm{min} \leq D \leq Q_\mathrm{max}$"),
-        mpatches.Patch(facecolor=_C_INFEASIBLE, edgecolor="black", alpha=0.85,
-                       label=r"Infeasible: $Q_\mathrm{min} > D$ → unit switched off"),
-        mpatches.Patch(facecolor=_C_ZERO,       edgecolor="black", alpha=0.65,
-                       label=r"Not committed ($Q_\mathrm{max} = 0$)"),
-    ]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=3,
-               fontsize=fontsize - 1, framealpha=0.90,
-               bbox_to_anchor=(0.5, -0.04))
-    fig.suptitle(
-        r"LP Upper Bound — $\mathtt{chp\_on}$ heuristic: combined output capacity per case (I–V)",
-        fontsize=fontsize + 1, y=1.01,
+    chp_fig = _make_figure(
+        bar_sets=[_C_CHP_HEAT, _C_CHP_POWER],
+        d_labels=[r"$\dot{Q}_D$", r"$P_D$"],
+        col_titles=["CHP heat output", "CHP electrical output"],
+        deltas=_CHP_DELTAS,
+        prim_lbl="CHP",
+        sec_lbl="B",
+        title=r"$LP^{U}$ CHP mode heuristics",
+        fontsize=fontsize+2,
     )
 
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=[0, 0.08, 1, 1])
-    fig.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return out
+    boi_fig = _make_figure(
+        bar_sets=[_B_BOI_HEAT],
+        d_labels=[r"$\dot{Q}_D$"],
+        col_titles=["Boiler heat output"],
+        deltas=_BOI_DELTAS,
+        prim_lbl="B",
+        sec_lbl="CHP",
+        title=r"$LP^{U}$ Boiler mode heuristics",
+        fontsize=fontsize,
+    )
+
+    chp_path = base / "lp_upper_heuristic_cases_chp.png"
+    boi_path = base / "lp_upper_heuristic_cases_boiler.png"
+
+    chp_fig.savefig(chp_path, dpi=150, bbox_inches="tight", pad_inches=0.3)
+    boi_fig.savefig(boi_path, dpi=150, bbox_inches="tight", pad_inches=0.3)
+    plt.close(chp_fig)
+    plt.close(boi_fig)
+
+    return chp_path, boi_path
+
 
 if __name__ == "__main__":
-    out = plot_heuristic_cases(D_B=350.0, D_CH=350.0, D_CE=220.0)
-    print(f"Heuristic figure saved → {out}")
-    
+    chp_out, boi_out = plot_heuristic_cases()
+    print(f"CHP figure    → {chp_out}")
+    print(f"Boiler figure → {boi_out}")

@@ -1,0 +1,128 @@
+% Heuristic unit-commitment algorithms for the LP upper-bound model.
+% Requires: algorithm, algpseudocode
+%
+% Notation
+%   \bar{Q}_\mathrm{CHP}   = Q_out_nom_CHP                          (max heat per CHP unit)
+%   \uQ_\mathrm{CHP}       = lambda_out_min_CHP_th * Q_out_nom_CHP  (min heat per CHP unit)
+%   \bar{P}_\mathrm{CHP}   = P_out_nom_CHP                          (max power per CHP unit)
+%   \uP_\mathrm{CHP}       = lambda_out_min_CHP_el * P_out_nom_CHP  (min power per CHP unit)
+%   \bar{Q}_B              = Q_out_nom_B                             (max heat per boiler)
+%   \uQ_B                  = lambda_out_min_B * Q_out_nom_B          (min heat per boiler)
+%   1[.] = Iverson bracket
+
+\begin{algorithm}
+\caption{CHP-on unit-commitment heuristic (evaluated per timestep $k$)}
+\label{alg:chp-on}
+\begin{algorithmic}[1]
+\Require $Q_D,\; P_D,\;
+         \bar{Q}_\mathrm{CHP},\; \underline{Q}_\mathrm{CHP},\;
+         \bar{P}_\mathrm{CHP},\; \underline{P}_\mathrm{CHP},\;
+         \bar{Q}_B,\; \underline{Q}_B$
+\Ensure $\delta_{\mathrm{CHP},1},\,\delta_{\mathrm{CHP},2},\,
+         \delta_{B,1},\,\delta_{B,2} \in \{0,1\}$
+
+\If{$2\bar{Q}_\mathrm{CHP} \geq Q_D$
+    \textbf{ and } $2\underline{Q}_\mathrm{CHP} \leq Q_D$
+    \textbf{ and } $2\bar{P}_\mathrm{CHP} \geq P_D$
+    \textbf{ and } $2\underline{P}_\mathrm{CHP} \leq P_D$}
+    \Comment{Case I: combined CHP range covers heat and power demand}
+    \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2},\;
+            \delta_{B,1},\;\delta_{B,2}) \gets (1,\,1,\,0,\,0)$
+
+\ElsIf{$(2\underline{Q}_\mathrm{CHP} > Q_D$
+        \textbf{ or } $2\underline{P}_\mathrm{CHP} > P_D)$
+        \textbf{ and } $\underline{Q}_\mathrm{CHP} \leq Q_D$
+        \textbf{ and } $\underline{P}_\mathrm{CHP} \leq P_D$
+        \textbf{ and } $\bar{Q}_\mathrm{CHP} \geq Q_D$}
+    \Comment{Case II: combined min exceeds demand, single CHP feasible}
+    \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2},\;
+            \delta_{B,1},\;\delta_{B,2}) \gets (1,\,0,\,0,\,0)$
+
+\ElsIf{$2\bar{Q}_\mathrm{CHP} < Q_D$}
+    \Comment{Case III: combined heat max insufficient}
+    \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2},\;
+            \delta_{B,1}) \gets (1,\,1,\,1)$
+    \State $\delta_{B,2} \gets
+            \mathbf{1}\!\left[2\bar{Q}_\mathrm{CHP} + \bar{Q}_B < Q_D\right]$
+
+\ElsIf{$\bar{Q}_\mathrm{CHP} < Q_D$
+        \textbf{ and } $\underline{Q}_\mathrm{CHP} + \underline{Q}_B \leq Q_D$}
+    \Comment{Case IV: single heat max insufficient, combined min guard satisfied}
+    \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2},\;
+            \delta_{B,1}) \gets (1,\,0,\,1)$
+    \State $\delta_{B,2} \gets
+            \mathbf{1}\!\left[\bar{Q}_\mathrm{CHP} + \bar{Q}_B < Q_D\right]$
+
+\ElsIf{$\underline{Q}_\mathrm{CHP} > Q_D$
+        \textbf{ or } $\underline{P}_\mathrm{CHP} > P_D$}
+    \Comment{Case V: single CHP min overproduces, switch to boilers}
+    \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2}) \gets (0,\,0)$
+    \If{$\underline{Q}_B \leq Q_D \leq \bar{Q}_B$}
+        \State $(\delta_{B,1},\;\delta_{B,2}) \gets (1,\,0)$
+    \ElsIf{$2\underline{Q}_B \leq Q_D \leq 2\bar{Q}_B$}
+        \State $(\delta_{B,1},\;\delta_{B,2}) \gets (1,\,1)$
+    \Else
+        \State \textbf{error}: no boiler configuration feasible at timestep $k$
+    \EndIf
+
+\Else
+    \State \textbf{error}: no case applies at timestep $k$
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+
+\begin{algorithm}
+\caption{Boiler-on unit-commitment heuristic (evaluated per timestep $k$)}
+\label{alg:boiler-on}
+\begin{algorithmic}[1]
+\Require $Q_D,\;
+         \bar{Q}_B,\; \underline{Q}_B,\;
+         \bar{Q}_\mathrm{CHP},\; \underline{Q}_\mathrm{CHP}$
+\Ensure $\delta_{B,1},\,\delta_{B,2},\,
+         \delta_{\mathrm{CHP},1},\,\delta_{\mathrm{CHP},2} \in \{0,1\}$
+
+\If{$2\bar{Q}_B \geq Q_D$
+    \textbf{ and } $2\underline{Q}_B \leq Q_D$}
+    \Comment{Case I: combined boiler range covers heat demand}
+    \State $(\delta_{B,1},\;\delta_{B,2},\;
+            \delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2}) \gets (1,\,1,\,0,\,0)$
+
+\ElsIf{$2\underline{Q}_B > Q_D$
+        \textbf{ and } $\underline{Q}_B \leq Q_D$
+        \textbf{ and } $\bar{Q}_B \geq Q_D$}
+    \Comment{Case II: combined min exceeds demand, single boiler feasible}
+    \State $(\delta_{B,1},\;\delta_{B,2},\;
+            \delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2}) \gets (1,\,0,\,0,\,0)$
+
+\ElsIf{$2\bar{Q}_B < Q_D$}
+    \Comment{Case III: combined heat max insufficient}
+    \State $(\delta_{B,1},\;\delta_{B,2},\;
+            \delta_{\mathrm{CHP},1}) \gets (1,\,1,\,1)$
+    \State $\delta_{\mathrm{CHP},2} \gets
+            \mathbf{1}\!\left[2\bar{Q}_B + \bar{Q}_\mathrm{CHP} < Q_D\right]$
+
+\ElsIf{$\bar{Q}_B < Q_D$
+        \textbf{ and } $\underline{Q}_B + \underline{Q}_\mathrm{CHP} \leq Q_D$}
+    \Comment{Case IV: single heat max insufficient, combined min guard satisfied}
+    \State $(\delta_{B,1},\;\delta_{B,2},\;
+            \delta_{\mathrm{CHP},1}) \gets (1,\,0,\,1)$
+    \State $\delta_{\mathrm{CHP},2} \gets
+            \mathbf{1}\!\left[\bar{Q}_B + \bar{Q}_\mathrm{CHP} < Q_D\right]$
+
+\ElsIf{$\underline{Q}_B > Q_D$}
+    \Comment{Case V: single boiler min overproduces, switch to CHPs}
+    \State $(\delta_{B,1},\;\delta_{B,2}) \gets (0,\,0)$
+    \If{$\underline{Q}_\mathrm{CHP} \leq Q_D \leq \bar{Q}_\mathrm{CHP}$}
+        \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2}) \gets (1,\,0)$
+    \ElsIf{$2\underline{Q}_\mathrm{CHP} \leq Q_D \leq 2\bar{Q}_\mathrm{CHP}$}
+        \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2}) \gets (1,\,1)$
+    \Else
+        \State \textbf{error}: no CHP configuration feasible at timestep $k$
+    \EndIf
+
+\Else
+    \State \textbf{error}: no case applies at timestep $k$
+\EndIf
+\end{algorithmic}
+\end{algorithm}

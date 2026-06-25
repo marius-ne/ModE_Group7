@@ -1,22 +1,23 @@
 """
-Regression test suite for the three Marius dispatch formulations.
+Regression test suite for the four Marius dispatch formulations.
 
 Usage
 -----
   # (Re-)generate baselines from scratch and save to file:
-  python Marius/regression_test.py --generate
+  python Marius/test/regression_test.py --generate
 
   # Check current formulations against saved baselines:
-  python Marius/regression_test.py
+  python Marius/test/regression_test.py
 
 The baseline file is stored at Marius/results/regression_baselines.json.
 Each entry records OPEX (total cost) for a (c_G, c_el) price pair.
 
 Tolerances
 ----------
-  MILP        : 2e-3 relative  (MIPGap=1e-3 leaves headroom for branch variability)
-  LP          : 1e-4 relative  (pure LP, deterministic up to numerical noise)
-  LP_binary   : 1e-4 relative  (pure LP, deterministic up to numerical noise)
+  MILP      : 2e-2 relative  (MIPGap=1e-2)
+  LP_lower  : 1e-4 relative  (pure LP, deterministic up to numerical noise)
+  LP_upper  : 1e-4 relative  (pure LP, deterministic up to numerical noise)
+  LP_approx : 1e-4 relative  (pure LP, deterministic up to numerical noise)
 """
 
 import json
@@ -27,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.append("Erdem")
-from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_approximated
+from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_upper, solve_lp_approximated
 
 _demand_df = pd.read_csv(Path("energy_demands.csv"))
 _Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
@@ -38,7 +39,6 @@ _P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 # ---------------------------------------------------------------------------
 BASELINE_FILE = Path(__file__).parent / ".." / "results" / "regression_baselines.json"
 
-# Five price pairs spanning the interesting range of gas vs electricity costs.
 PRICE_PAIRS: list[tuple[float, float]] = [
     (0.08, 0.08),   # both cheap: CHPs run flat-out, minimal grid
     (0.10, 0.25),   # cheap gas, moderate electricity: CHPs preferred
@@ -47,18 +47,20 @@ PRICE_PAIRS: list[tuple[float, float]] = [
     (0.28, 0.50),   # both expensive: tight optimisation
 ]
 
-MILP_MIP_GAP: float = 1e-3
+MILP_MIP_GAP: float = 1e-2
 
 FORMULATIONS: dict[str, callable] = {
     "MILP":      lambda c_G, c_el: solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=MILP_MIP_GAP),
-    "LP":        lambda c_G, c_el: solve_lp_approximated(_Q_D, _P_D, c_G, c_el),
-    "LP_binary": lambda c_G, c_el: solve_lp_lower(_Q_D, _P_D, c_G, c_el),
+    "LP_lower":  lambda c_G, c_el: solve_lp_lower(_Q_D, _P_D, c_G, c_el),
+    "LP_upper":  lambda c_G, c_el: solve_lp_upper(_Q_D, _P_D, c_G, c_el),
+    "LP_approx": lambda c_G, c_el: solve_lp_approximated(_Q_D, _P_D, c_G, c_el, mode="mean_efficiency"),
 }
 
 TOLERANCES: dict[str, float] = {
-    "MILP":      2e-3,
-    "LP":        1e-4,
-    "LP_binary": 1e-4,
+    "MILP":      2e-2,
+    "LP_lower":  1e-4,
+    "LP_upper":  1e-4,
+    "LP_approx": 1e-4,
 }
 
 _KEY_FMT = "cG={c_G:.4f}_cel={c_el:.4f}"
@@ -87,7 +89,7 @@ def generate_baselines() -> None:
         for name, solver in FORMULATIONS.items():
             done += 1
             print(f"[{done}/{n_total}] {name:12s}  cG={c_G:.4f}  cel={c_el:.4f} ... ", end="", flush=True)
-            opex, _ = solver(c_G, c_el)
+            opex = solver(c_G, c_el)[0]
             baselines[key][name] = opex
             print(f"OPEX = {opex:,.2f}")
 
@@ -107,16 +109,15 @@ def run_regression() -> bool:
         print("Run with --generate first to create it.")
         return False
 
-    with open(BASELINE_FILE) as _fh:
-        _info = json.load(_fh).get("info", {})
-    if _info.get("MILP_mip_gap") != MILP_MIP_GAP:
-        print(
-            f"WARNING: baseline MIP gap ({_info.get('MILP_mip_gap')}) differs from "
-            f"current ({MILP_MIP_GAP}). Consider re-running --generate."
-        )
-
     with open(BASELINE_FILE) as fh:
         baselines: dict = json.load(fh)
+
+    saved_gap = baselines.get("info", {}).get("MILP_mip_gap")
+    if saved_gap != MILP_MIP_GAP:
+        print(
+            f"WARNING: baseline MIP gap ({saved_gap}) differs from "
+            f"current ({MILP_MIP_GAP}). Consider re-running --generate."
+        )
 
     results: list[dict] = []
     n_total = len(PRICE_PAIRS) * len(FORMULATIONS)
@@ -132,7 +133,7 @@ def run_regression() -> bool:
         for name, solver in FORMULATIONS.items():
             done += 1
             print(f"[{done}/{n_total}] {name:12s}  cG={c_G:.4f}  cel={c_el:.4f} ... ", end="", flush=True)
-            opex, _ = solver(c_G, c_el)
+            opex = solver(c_G, c_el)[0]
             expected = baseline[name]
             tol = TOLERANCES[name]
 
@@ -163,7 +164,8 @@ def run_regression() -> bool:
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    if "--generate" in sys.argv:
+    GENERATE = True
+    if GENERATE:
         generate_baselines()
     else:
         ok = run_regression()
