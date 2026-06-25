@@ -92,7 +92,7 @@ else:
     sum_dB_values = df["sum_dB"].values
     sum_dCHP_values = df["sum_dCHP"].values
 
-LEGEND_KW = dict(framealpha=0.85, edgecolor="gray", fontsize=9)
+LEGEND_KW = dict(framealpha=0.85, edgecolor="gray", fontsize=11)
 OPEX_YLABEL = r"OPEX $\left[\dfrac{€_{\mathrm{OPEX}}}{€\,/\,\mathrm{kWh}}\right]$"
 MS = 2.5   # uniform marker size
 
@@ -263,12 +263,12 @@ axins2.set_title(r"zoom $r\in[0.8,\,1.1]$", fontsize=7, pad=2)
 ax[1].indicate_inset_zoom(axins2, edgecolor="0.4")
 
 # --- Delta sums ---
-ax[2].plot(price_ratios, sum_dB_values,   color=C_DB,   linewidth=1.5, marker="^", markersize=MS, label=r"$\sum \delta_{\mathrm{B}}$")
-ax[2].plot(price_ratios, sum_dCHP_values, color=C_DCHP, linewidth=1.5, marker="v", markersize=MS, label=r"$\sum \delta_{\mathrm{CHP}}$")
+ax[2].plot(price_ratios, sum_dB_values,   color=C_DB,   linewidth=1.5, marker="^", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{B},i,k}$")
+ax[2].plot(price_ratios, sum_dCHP_values, color=C_DCHP, linewidth=1.5, marker="v", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{CHP},i,k}$")
 ax[2].set_xscale("log")
 ax[2].set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$", fontsize=12)
-ax[2].set_ylabel(r"$\sum \delta\;[-]$", fontsize=12)
-ax[2].set_title(r"MILP Commitment: $\sum \delta_{\mathrm{B}}$ and $\sum \delta_{\mathrm{CHP}}$ vs Price Ratio")
+ax[2].set_ylabel(r"$\sum_{i,k} \delta_{i,k}\;[-]$", fontsize=12)
+ax[2].set_title(r"MILP Commitment: $\sum_{i,k} \delta_{\mathrm{B},i,k}$ and $\sum_{i,k} \delta_{\mathrm{CHP},i,k}$ vs Price Ratio")
 ax[2].legend(**LEGEND_KW)
 ax[2].grid(True, which="both", ls="--")
 
@@ -280,14 +280,34 @@ plt.close()
 
 # --- Standalone delta-sums plot ---
 fig_ds, ax_ds = plt.subplots(figsize=(9, 4))
-ax_ds.plot(price_ratios, sum_dB_values,   color=C_DB,   linewidth=1.5, marker="^", markersize=MS, label=r"$\sum \delta_{\mathrm{B}}$")
-ax_ds.plot(price_ratios, sum_dCHP_values, color=C_DCHP, linewidth=1.5, marker="v", markersize=MS, label=r"$\sum \delta_{\mathrm{CHP}}$")
+ax_ds.plot(price_ratios, sum_dB_values,   color=C_DB,   linewidth=1.5, marker="^", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{B},i,k}$")
+ax_ds.plot(price_ratios, sum_dCHP_values, color=C_DCHP, linewidth=1.5, marker="v", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{CHP},i,k}$")
 ax_ds.set_xscale("log")
-ax_ds.set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$", fontsize=12)
-ax_ds.set_ylabel(r"$\sum \delta\;[-]$", fontsize=12)
-ax_ds.set_title(r"MILP Commitment: $\sum \delta_{\mathrm{B}}$ and $\sum \delta_{\mathrm{CHP}}$ vs Price Ratio")
+ax_ds.set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$", fontsize=14)
+ax_ds.set_ylabel(r"$\sum_{i,k} \delta_{i,k}\;[-]$", fontsize=14)
+# Set the title to be a bit higher above the plot
+ax_ds.set_title(r"MILP Commitment: $\sum_{i,k} \delta_{\mathrm{B},i,k}$ and $\sum_{i,k} \delta_{\mathrm{CHP},i,k}$ vs Price Ratio", fontsize=14, pad=18)
 ax_ds.legend(**LEGEND_KW)
+ax_ds.xaxis.set_tick_params(labelsize=12)
 ax_ds.grid(True, which="both", ls="--", alpha=0.5)
+
+ax_ds.axvline(0.7, color="gray", linewidth=1.2, linestyle="--")
+ax_ds.axvline(1.0, color="gray", linewidth=1.2, linestyle="--")
+_y_lo, _y_hi = ax_ds.get_ylim()
+_y_mid        = 1.1 * (_y_lo + _y_hi) / 2
+_x_chp_mid    = np.sqrt(price_ratios[0] * 0.7)   # geometric centre of CHP region
+_x_be_mid     = np.sqrt(0.7 * 1.0)               # geometric centre of break-even region
+_x_boiler_mid = np.sqrt(1.0 * price_ratios[-1])  # geometric centre of boiler region
+ax_ds.text(_x_chp_mid,    _y_mid, "CHP-mode",    ha="center", va="center", fontsize=14, color="gray")
+ax_ds.text(_x_boiler_mid, _y_mid, "Boiler-mode", ha="center", va="center", fontsize=14, color="gray")
+ax_ds.annotate(
+    "Break-even",
+    xy=(_x_be_mid, _y_hi * 0.78),
+    xytext=(np.sqrt(_x_boiler_mid), _y_hi * 0.78),
+    ha="center", va="center", fontsize=14, color="gray",
+    arrowprops=dict(arrowstyle="->", color="gray", lw=1.0),
+)
+
 fig_ds.tight_layout()
 fig_ds.savefig("Marius/visualization/delta_sums_vs_price_ratio.png", dpi=300)
 plt.close(fig_ds)

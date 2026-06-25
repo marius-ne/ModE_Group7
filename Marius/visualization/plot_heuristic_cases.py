@@ -106,15 +106,15 @@ def _draw_bars(ax, bars, d_label, deltas, prim_lbl, sec_lbl, fontsize,
 
     # Row 2: secondary delta values
     for i, (_pv, sv) in enumerate(deltas):
-        ax.text(x[i], -0.34, f"${sv}$", transform=trans,
+        ax.text(x[i], -0.36, f"${sv}$", transform=trans,
                 ha="center", va="baseline", fontsize=fs_val, color="#333333", clip_on=False)
 
     if show_delta_labels:
-        l1 = f"$\\sum_i\\delta_{{\\mathrm{{{prim_lbl}}},i,k}}=$"
-        l2 = f"$\\sum_i\\delta_{{\\mathrm{{{sec_lbl}}},i,k}}=$"
+        l1 = f"$\\sum_{i}\\delta_{{\\mathrm{{{prim_lbl}}},i,k}}=$"
+        l2 = f"$\\sum_{i}\\delta_{{\\mathrm{{{sec_lbl}}},i,k}}=$"
         ax.text(-0.65, -0.18, l1, transform=trans,
                 ha="right", va="baseline", fontsize=fs_label, color="#333333", clip_on=False)
-        ax.text(-0.65, -0.34, l2, transform=trans,
+        ax.text(-0.65, -0.36, l2, transform=trans,
                 ha="right", va="baseline", fontsize=fs_label, color="#333333", clip_on=False)
 
 
