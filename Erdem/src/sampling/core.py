@@ -15,9 +15,14 @@ from src.misc.constants import RESULTS_DIR
 # -- Price ranges --------------------------
 GAS_MIN, GAS_MAX = 25.0, 315.0 # €/MWh
 ELEC_MIN, ELEC_MAX = 65.0, 450.0 # €/MWh
+N_TOTAL = 40 # total number of sample points (including corners and edge midpoints)
+def nr_datapoints(number):
+    global N_TOTAL
+    N_TOTAL = number
+    return N_TOTAL
 
 # -- Number of sample points ----------------------
-N_TOTAL = 40 # total number of sample points (including corners and edge midpoints)
+
 N_INTERIOR = 32 # interior points per method
                 # Sobol: must be power of 2 → maximum 32 points with 40 points available
                 # LHS: no restriction → 32 chosen to keep sets comparable
@@ -192,7 +197,7 @@ def load_samples(sampling_method: str, file_name: str) -> tuple[pd.DataFrame | p
 # == Sampling function ===========================
 def create_sample(
         sampling_method: str,
-        n_samples: int = N_TOTAL,
+        n_samples: int  = N_TOTAL,
         n_interior: int = N_INTERIOR,
         n_corner: int = N_CORNERS,
 ) -> tuple[pd.DataFrame, dict] | pd.Series:
@@ -235,6 +240,34 @@ def create_sample(
     sample_quality = quality(arr_samples)
 
     return df_samples, sample_quality
+
+
+def generate_test_sample(n_samples: int):
+    """
+    Create a random test sample using Latin hypercube sampling within the price boundaries.
+    :param n_samples: Number of test samples to create
+    :return: DataFrame with column "ratios"
+    """
+    sampler = qmc.LatinHypercube(d=2, scramble=True, optimization="random-cd", seed=28)
+    raw_samples = sampler.random(n_samples)
+    test_samples = qmc.scale(
+        raw_samples,
+        l_bounds=[GAS_MIN, ELEC_MIN],
+        u_bounds=[GAS_MAX, ELEC_MAX]
+    )
+    ratios = test_samples[:, 0] / test_samples[:, 1]
+
+    df_test_samples = pd.DataFrame({
+        "ratios": ratios,
+    })
+
+    base_dir = RESULTS_DIR / "Sampling"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    sample_file = base_dir / f"random_sample_{n_samples}.csv"
+    df_test_samples.to_csv(sample_file, index=False, header=True, float_format="%.18g")
+    print(f"Saved random sample to {sample_file}")
+
+    return df_test_samples
 
 
 # == Visualization functions ======================

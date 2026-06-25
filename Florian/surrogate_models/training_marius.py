@@ -1,8 +1,10 @@
 import pandas as pd
 import joblib
 import os
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 
@@ -12,13 +14,20 @@ os.makedirs("Florian/results/regression", exist_ok=True)
 
 # Lade den Datensatz (Passe den Dateipfad an, falls nötig)
 df = pd.read_csv("Marius/results/evaluation_log_samples.csv", sep=',')
-
+df_test = pd.read_csv("Marius/results/opex_random_sample_10.csv")
 # Die unabhängige Variable (Feature) ist für alle Modelle die Ratio
 # sklearn erwartet ein 2D-Array, daher doppelte eckige Klammern
-X = df[["ratio"]]
+X_train = df[["ratio"]]
+X_test = df_test[["ratio"]]
 
 # Liste der abhängigen Variablen (Targets)
 opex_columns = ["opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"]
+test_opex_columns = {
+    "opex_milp": "opex_milp",
+    "opex_lp_lower": "opex_lp_lower",
+    "opex_lp_upper": "opex_lp_upper",
+    "opex_lp_approx": "opex_lp_approximated",
+}
 combined_predictions = []
 
 # Schleife über alle OPEX-Spalten
@@ -27,10 +36,8 @@ for target in opex_columns:
     print(f"Starte Modelltraining für: {target}")
     print(f"{'='*50}")
 
-    y = df[target]
-
-    # Train-Test-Split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    y_train = df[target]
+    y_test = df_test[test_opex_columns[target]]
 
     # Modell initialisieren und anlernen
    
@@ -88,7 +95,6 @@ for target in opex_columns:
     # Plot speichern und anzeigen
     plot_path = f"Florian/results/regression/actual_vs_predicted_{target}.png"
     plt.savefig(plot_path, dpi=300)
-    plt.show()
     plt.close()
 
 # Gemeinsamer Scatterplot für alle Modelle.
@@ -129,5 +135,4 @@ plt.ylim(min_val * 0.9, max_val * 1.05)
 
 combined_plot_path = "Florian/results/regression/actual_vs_predicted_all_models.png"
 plt.savefig(combined_plot_path, dpi=300)
-plt.show()
 plt.close()
