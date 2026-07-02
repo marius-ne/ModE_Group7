@@ -14,7 +14,7 @@ _P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 c_el = 1.0
 strict_demand_satisfaction = True
 
-ratios = pd.read_csv("Erdem/results/Sampling/log_training_samples.csv")["ratios"].values
+ratios = pd.read_csv("Erdem/results/Sampling/training/log_5_samples.csv")["ratios"].values
 
 rows = []
 for i, ratio in enumerate(ratios):
@@ -36,7 +36,7 @@ for i, ratio in enumerate(ratios):
     print(f"  MILP={opex_milp:,.2f}  LP_lower={opex_lower:,.2f}  LP_upper={opex_upper:,.2f}  LP_approx={opex_approx:,.2f}")
 
 df = pd.DataFrame(rows)
-out_path = "Marius/results/evaluation_log_samples.csv"
+out_path = "Marius/results/evaluation_log_samples_5.csv"
 df.to_csv(out_path, index=False)
 print(f"\nSaved {len(df)} rows to {out_path}")
 
