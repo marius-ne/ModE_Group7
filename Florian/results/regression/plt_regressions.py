@@ -7,6 +7,7 @@ import pandas as pd
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib import colors as mcolors
 from sklearn.metrics import mean_squared_error, r2_score
 
 import sys
@@ -18,8 +19,25 @@ sys.path.insert(0, str(ROOT / "Erdem"))
 from src.visualization.style import get_figsize, reset_plot_settings
 
 
-RESULTS_DIR = Path("Florian/results/regression")
+RESULTS_DIR = Path("Florian/results/regression/comparison_2D")
+TRAIN_DATA_PATH = Path("Marius/results/opex_LHS_2D_sample.csv")
 TEST_DATA_PATH = Path("Marius/results/opex_random_sample_10.csv")
+
+# Select what this script should generate:
+# "all"                         -> regenerate every plot defined in this file
+# "regression_lines"            -> plot all regression lines with test data
+# "single_regression"           -> plot one regression line with test data; uses SELECTED_MODEL
+# "single_actual_vs_predicted"  -> plot actual vs predicted for one model; uses SELECTED_MODEL
+# "all_actual_vs_predicted"     -> plot actual vs predicted for all models together
+# "r2_compared"                 -> plot R2 over training size for model actual vs model prediction
+# "r2_actual_milp"              -> plot R2 over training size compared to actual MILP OPEX
+# "train_test_single_model"     -> plot training and test data for one model; uses SELECTED_MODEL
+# "train_test_all_models"       -> plot training and test data for all four models in stacked subplots
+PLOT_MODE = "train_test_all_models"
+
+# Used by the single-model plot modes above.
+# Choose one of: "opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"
+SELECTED_MODEL = "opex_milp"
 
 MODEL_PATHS = {
     "opex_milp": Path("Florian/surrogate_model_opex_milp.joblib"),
@@ -61,6 +79,11 @@ TEST_TARGET_COLUMNS = {
 }
 
 
+def lighter_color(color, amount=0.55):
+    rgb = np.array(mcolors.to_rgb(color))
+    return tuple(rgb + (1 - rgb) * amount)
+
+
 def plot_regression_lines_with_test_data():
     df_test = pd.read_csv(TEST_DATA_PATH)
     x_test = df_test[["ratio"]]
@@ -69,7 +92,7 @@ def plot_regression_lines_with_test_data():
     models = {name: joblib.load(path) for name, path in MODEL_PATHS.items()}
 
     reset_plot_settings()
-    plt.figure(figsize=get_figsize(16, "golden"))
+    plt.figure(figsize=get_figsize(25, "golden"))
 
     for model_name, model in models.items():
         y_line = model.predict(x_line)
@@ -84,7 +107,7 @@ def plot_regression_lines_with_test_data():
             y_line,
             color=COLORS[model_name],
             linewidth=2,
-            label=f"{model_label}: y = {slope:.2f}x + {intercept:.2f}",
+            label=f"{model_label}",
         )
 
         plt.scatter(
@@ -102,9 +125,11 @@ def plot_regression_lines_with_test_data():
     plt.title("Regression Lines with Test Data")
     plt.grid(True)
     plt.legend()
+    plt.xscale("log")
+    plt.yscale("log")
     plt.tight_layout()
 
-    plt.savefig("Florian/results/regression/regression_lines.png", dpi=300)
+    plt.savefig("Florian/results/regression/comparison_2D/regression_lines.png", dpi=300)
     plt.close()
 
 def plot_single_regression_lines_with_data(model_name):
@@ -156,6 +181,154 @@ def plot_single_regression_lines_with_data(model_name):
 
     plt.savefig(RESULTS_DIR / f"regression_line_{model_name}.png", dpi=300)
     plt.close()
+
+
+def plot_train_and_test_data_for_model(model_name):
+    if model_name not in MODEL_PATHS:
+        raise ValueError(
+            f"Unknown model '{model_name}'. Choose one of: {list(MODEL_PATHS)}"
+        )
+
+    df_train = pd.read_csv(TRAIN_DATA_PATH)
+    df_test = pd.read_csv(TEST_DATA_PATH)
+    model = joblib.load(MODEL_PATHS[model_name])
+    model_label = MODEL_LABELS[model_name]
+    target_column = TEST_TARGET_COLUMNS[model_name]
+
+    x_min = min(df_train["ratio"].min(), df_test["ratio"].min())
+    x_max = max(df_train["ratio"].max(), df_test["ratio"].max())
+    x_line_values = np.linspace(x_min, x_max, 250)
+    x_line = pd.DataFrame({"ratio": x_line_values})
+
+    y_line = model.predict(x_line)
+    intercept = model.intercept_
+    slope = model.coef_[0]
+
+    base_color = COLORS[model_name]
+    train_color = lighter_color(base_color)
+    test_color = base_color
+
+    reset_plot_settings()
+    plt.figure(figsize=get_figsize(16, "golden"))
+
+    plt.plot(
+        x_line_values,
+        y_line,
+        color=base_color,
+        linewidth=2,
+        label=f"{model_label}: y = {slope:.2f}x + {intercept:.2f}",
+    )
+
+    plt.scatter(
+        df_train["ratio"],
+        df_train[model_name],
+        color=train_color,
+        edgecolors=base_color,
+        alpha=0.85,
+        linewidths=0.7,
+        marker="o",
+        label=f"{model_label} training data",
+    )
+
+    plt.scatter(
+        df_test["ratio"],
+        df_test[target_column],
+        color=test_color,
+        edgecolors="black",
+        alpha=0.85,
+        linewidths=0.7,
+        marker="s",
+        label=f"{model_label} test data",
+    )
+
+    plt.xlabel("Ratio")
+    plt.ylabel("OPEX/C_el")
+    plt.title(f"Training and Test Data with Regression Line ({model_label})")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+
+    plot_path = RESULTS_DIR / f"train_test_regression_line_{model_name}.png"
+    plt.savefig(plot_path, dpi=300)
+    plt.close()
+    print(f"Training/test plot saved to: {plot_path}")
+
+
+def plot_train_and_test_data_for_all_models():
+    df_train = pd.read_csv(TRAIN_DATA_PATH)
+    df_test = pd.read_csv(TEST_DATA_PATH)
+    models = {name: joblib.load(path) for name, path in MODEL_PATHS.items()}
+
+    reset_plot_settings()
+    fig, axes = plt.subplots(
+        len(MODEL_PATHS),
+        1,
+        figsize=(get_figsize(16, "golden")[0], 14),
+        sharex=True,
+    )
+
+    for ax, (model_name, model) in zip(axes, models.items()):
+        model_label = MODEL_LABELS[model_name]
+        target_column = TEST_TARGET_COLUMNS[model_name]
+
+        x_min = min(df_train["ratio"].min(), df_test["ratio"].min())
+        x_max = max(df_train["ratio"].max(), df_test["ratio"].max())
+        x_line_values = np.linspace(x_min, x_max, 250)
+        x_line = pd.DataFrame({"ratio": x_line_values})
+
+        y_line = model.predict(x_line)
+        intercept = model.intercept_
+        slope = model.coef_[0]
+
+        base_color = COLORS[model_name]
+        train_color = lighter_color(base_color)
+        test_color = base_color
+
+        ax.plot(
+            x_line_values,
+            y_line,
+            color=base_color,
+            linewidth=2,
+            label=f"{model_label}: y = {slope:.2f}x + {intercept:.2f}",
+        )
+
+        ax.scatter(
+            df_train["ratio"],
+            df_train[model_name],
+            color=train_color,
+            edgecolors=base_color,
+            alpha=0.85,
+            linewidths=0.7,
+            marker="o",
+            label="training data",
+        )
+
+        ax.scatter(
+            df_test["ratio"],
+            df_test[target_column],
+            color=test_color,
+            edgecolors="black",
+            alpha=0.85,
+            linewidths=0.7,
+            marker="s",
+            label="test data",
+        )
+
+        ax.set_ylabel("OPEX/C_el")
+        ax.set_title(model_label)
+        ax.grid(True)
+        ax.legend()
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+
+    axes[-1].set_xlabel("Ratio")
+    fig.suptitle("Training and Test Data with Regression Lines", y=0.995)
+    fig.tight_layout()
+
+    plot_path = RESULTS_DIR / "train_test_regression_lines_all_models_log.png"
+    fig.savefig(plot_path, dpi=300)
+    plt.close(fig)
+    print(f"Training/test plot for all models saved to: {plot_path}")
 
 
 def plot_single_model(target, validation_df):
@@ -353,7 +526,52 @@ def regenerate_all_regression_plots():
 
 
 def main():
-    regenerate_all_regression_plots()
+    if PLOT_MODE == "all":
+        regenerate_all_regression_plots()
+
+    elif PLOT_MODE == "regression_lines":
+        plot_regression_lines_with_test_data()
+
+    elif PLOT_MODE == "single_regression":
+        plot_single_regression_lines_with_data(SELECTED_MODEL)
+
+    elif PLOT_MODE == "single_actual_vs_predicted":
+        validation_df = pd.read_csv(VALIDATION_FILES[SELECTED_MODEL])
+        plot_single_model(SELECTED_MODEL, validation_df)
+
+    elif PLOT_MODE == "all_actual_vs_predicted":
+        combined_predictions = []
+        for target, validation_path in VALIDATION_FILES.items():
+            validation_df = pd.read_csv(validation_path)
+            combined_predictions.append(
+                pd.DataFrame(
+                    {
+                        "target": target,
+                        "actual": validation_df["y_test"].to_numpy(),
+                        "predicted": validation_df["y_pred"].to_numpy(),
+                    }
+                )
+            )
+        plot_all_models(pd.concat(combined_predictions, ignore_index=True))
+
+    elif PLOT_MODE == "r2_compared":
+        plot_r2_scores_by_training_size("compared")
+
+    elif PLOT_MODE == "r2_actual_milp":
+        plot_r2_scores_by_training_size("compared_to_actual_milp_opex")
+
+    elif PLOT_MODE == "train_test_single_model":
+        plot_train_and_test_data_for_model(SELECTED_MODEL)
+
+    elif PLOT_MODE == "train_test_all_models":
+        plot_train_and_test_data_for_all_models()
+
+    else:
+        raise ValueError(
+            "PLOT_MODE must be one of: all, regression_lines, single_regression, "
+            "single_actual_vs_predicted, all_actual_vs_predicted, r2_compared, "
+            "r2_actual_milp, train_test_single_model, train_test_all_models."
+        )
 
 
 if __name__ == "__main__":

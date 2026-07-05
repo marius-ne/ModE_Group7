@@ -8,18 +8,18 @@ from sklearn.metrics import mean_squared_error, r2_score
 # "inter_model_r2" = bisherige Auswertung wie zuvor
 # "compared_to_milp_r2" = alle y_pred gegen das echte MILP-OPEX aus Marius/results/opex_random_sample_10.csv
 # "mse_vs_milp" = MILP-Testwerte mit y_pred eines waehlbaren Modells per MSE vergleichen
-RUN_MODE = "mse_vs_milp"
-MSE_MODEL = "MILP_pred"
-USE_ACTUAL_MILP_OPEX = True
+RUN_MODE = "compared_to_milp_r2"  # "inter_model_r2", "compared_to_milp_r2", "mse_vs_milp"
+# MSE_MODEL = "MILP_pred"
+# USE_ACTUAL_MILP_OPEX = True
 
 RESULTS_DIR = Path("Florian/results/regression")
 MARIUS_RESULTS_DIR = Path("Marius/results")
 
 MODEL_FILES = {
-    "MILP_pred": RESULTS_DIR / "validation_opex_milp.csv",
-    "LP_Upper": RESULTS_DIR / "validation_opex_lp_upper.csv",
-    "LP_Lower": RESULTS_DIR / "validation_opex_lp_lower.csv",
-    "LP_Approx": RESULTS_DIR / "validation_opex_lp_approx.csv",
+    "MILP_pred": RESULTS_DIR / "validation_5_opex_milp.csv",
+    "LP_Upper": RESULTS_DIR / "validation_5_opex_lp_upper.csv",
+    "LP_Lower": RESULTS_DIR / "validation_5_opex_lp_lower.csv",
+    "LP_Approx": RESULTS_DIR / "validation_5_opex_lp_approx.csv",
 }
 
 
@@ -97,7 +97,7 @@ def run_original_comparison():
         ]
     )
     print(r2_df)
-    r2_df.to_csv(RESULTS_DIR / "r2_score_20_compared.csv", index=False)
+    r2_df.to_csv(RESULTS_DIR / "r2_score_5_compared.csv", index=False)
 
 
 def run_milp_opex_actual_comparison():
@@ -134,7 +134,7 @@ def run_milp_opex_actual_comparison():
     r2_df["delta_to_milp_pred"] = r2_df["r2_compared_to_actual_milp_opex"] - milp_r2
 
     print(r2_df)
-    r2_df.to_csv(RESULTS_DIR / "r2_score_20_compared_to_actual_milp_opex.csv", index=False)
+    r2_df.to_csv(RESULTS_DIR / "r2_score_5_compared_to_actual_milp_opex.csv", index=False)
 
 
 def compare_milp_test_values_to_model_predictions(model_name, use_actual_milp_opex=True):
