@@ -79,7 +79,7 @@ REUSE_EXISTING_DATA = True
 
 # Ground-truth units for compare_r2_vs_milp()'s 1D-family modes: "absolute" (€, rescaled
 # by the real electricity price) or "specific" (each mode's own native €/(€/kWh) units).
-MILP_COMPARISON_UNIT = "absolute"
+MILP_COMPARISON_UNIT = "specific"
 
 OUT_DIR = Path("Marius/surrogate_models")
 RESULTS_DIR = OUT_DIR / "results"
