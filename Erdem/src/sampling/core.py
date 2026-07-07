@@ -151,7 +151,7 @@ def save_samples(
     Save the sampled points and their quality metrics to a parquet and JSON file or a csv file (for log)
     :param samples: DataFrame or Series with columns "gas_price", "electricity_price", "point_type" and the corresponding values
     :param sample_quality: Dictionary of discrepancy and minimum pairwise distance
-    :param sampling_method: Name of the sampling method (either "lhs", "sobol", "log or "random")
+    :param sampling_method: Name of the sampling method (either "lhs", "sobol", "log", "angle" or "random")
     :param file_name: Optional suffix of the output file (without extension)
     :param sample_type: Type of sampling (either "training" or "test")
     """
@@ -159,8 +159,8 @@ def save_samples(
     base_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        if sampling_method == "log":
-            # Save samples as csv for log (1D)
+        if sampling_method in ("log", "angle"):
+            # Save samples as csv for log/angle (1D)
             suffix = f"_{file_name}" if file_name else ""
             sample_file = base_dir / f"{sampling_method}{suffix}_samples.csv"
             samples.to_csv(sample_file, index=False, header=True, float_format="%.18g")
@@ -191,7 +191,7 @@ def load_samples(
 ) -> tuple[pd.DataFrame | pd.Series, dict | None]:
     """
     Load the sampled points and their quality metrics.
-    :param sampling_method: Name of the sampling method (either "lhs", "sobol", "log" or "random")
+    :param sampling_method: Name of the sampling method (either "lhs", "sobol", "log", "angle" or "random")
     :param sample_type: Type of sampling (either "training" or "test")
     :param file_name: Optional suffix of the output file (without extension)
     :return: DataFrame with the sample points and a dictionary with the sample quality metrics
@@ -199,7 +199,7 @@ def load_samples(
     """
     base_dir = RESULTS_DIR / "Sampling" / sample_type
 
-    if sampling_method == "log":
+    if sampling_method in ("log", "angle"):
         suffix = f"_{file_name}" if file_name else ""
         sample_file = base_dir / f"{sampling_method}{suffix}_samples.csv"
 
@@ -230,7 +230,7 @@ def create_sample(
 ) -> tuple[pd.DataFrame, dict] | pd.Series:
     """
     Create a sample set using the specified sampling method and return a DataFrame with the sampling points and a dictionary with quality metrics
-    :param sampling_method: The sampling method to use ("sobol", "lhs", "log" or "random")
+    :param sampling_method: The sampling method to use ("sobol", "lhs", "log", "angle" or "random")
     :param n_total: Number of total sample points to create
     :param n_corner: Number of sample points on corners of the price domain
     :param n_edges: Number of sample points on edges of the price domain
@@ -251,6 +251,22 @@ def create_sample(
 
         # Create evenly spaced sampling points on a log-scale
         samples = np.logspace(np.log10(min_ratio), np.log10(max_ratio), n_total)
+
+        return pd.Series(samples, name="ratios")
+
+    elif method == "angle":
+        # Generate samples equally spaced in the rise angle (arctan of the ratio) of
+        # the price rectangle's LR (GAS_MIN/ELEC_MAX) and UL (GAS_MAX/ELEC_MIN) corner
+        # ratios, then convert back to slopes -- equally spaced slopes/rays rather
+        # than equally spaced ratios (1D)
+        min_ratio = GAS_MIN / ELEC_MAX  # LR corner
+        max_ratio = GAS_MAX / ELEC_MIN  # UL corner
+
+        min_angle = np.arctan(min_ratio)
+        max_angle = np.arctan(max_ratio)
+
+        angles = np.linspace(min_angle, max_angle, n_total)
+        samples = np.tan(angles)
 
         return pd.Series(samples, name="ratios")
 
@@ -339,7 +355,7 @@ def create_sample(
     else:
         raise ValueError(
             f"Sampling method '{sampling_method}' not supported. "
-            "Choose either 'sobol', 'lhs', 'log' or 'random'."
+            "Choose either 'sobol', 'lhs', 'log', 'angle' or 'random'."
         )
 
 
