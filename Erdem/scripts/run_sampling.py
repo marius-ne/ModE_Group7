@@ -6,12 +6,12 @@ if __name__ == "__main__":
     # ============================================================
     # Global parameter
     # ============================================================
-    N_SAMPLES_TRAIN = 40
-    N_SAMPLES_TEST = 10
+    N_SAMPLES_TRAIN = 5
+    N_SAMPLES_TEST = 0
     N_CORNER = 4
-    N_EDGES = 4
+    N_EDGES = 0
 
-    SAMPLE_TYPE = "test" # "training" or "test"
+    SAMPLE_TYPE = "training" # "training" or "test"
     TYPE_CONFIG = {
         "training": N_SAMPLES_TRAIN,
         "test": N_SAMPLES_TEST
@@ -68,7 +68,8 @@ if __name__ == "__main__":
             samples = result
             sample_quality = None
         else:
-            samples, sample_quality = result
+           samples, sample_quality = result
+           
 
         save_samples(
             samples=samples,

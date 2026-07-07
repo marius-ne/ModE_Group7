@@ -17,7 +17,7 @@ from formulation_LP_upper import solve as solve_lp_upper
 from formulation_LP_approximated import solve as solve_lp_approximated
 
 
-RATIOS_CSV = ROOT / "Erdem" / "results" / "Sampling" / "random_sample_10.csv"
+RATIOS_CSV = ROOT / "Erdem" / "results" / "Sampling" / "test" / "log_10_samples.csv"
 OUTPUT_CSV = ROOT / "Marius" / "results" / "opex_random_sample_10.csv"
 
 
