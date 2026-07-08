@@ -9,15 +9,15 @@ from sklearn.metrics import mean_squared_error, r2_score
 # Choose which input should be used for training:
 # "ratio"     -> previous behavior: one feature, ratio = c_G / c_el
 # "prices_2d" -> two features, concrete gas and electricity prices: c_G and c_el
-TRAINING_MODE = "prices_2d"  # "ratio" or "prices_2d"
+TRAINING_MODE = "ratio"  # "ratio" or "prices_2d"
 
-RATIO_TRAINING_FILE = "Marius/results/opex_LHS_2D_sample_40_2.csv"
+RATIO_TRAINING_FILE = "Marius/results/opex_specific_LHS_2D_sample_40_.csv"
 RATIO_TEST_FILE = "Marius/results/opex_random_sample_10.csv"
 
 PRICE_2D_TRAINING_FILE = "Marius/results/opex_discrete_prices_lhs_40.csv"
 
-REGRESSION_RESULTS_DIR = "Florian/results/regression"
-COMPARISON_2D_DIR = f"{REGRESSION_RESULTS_DIR}/comparison_2D"
+REGRESSION_RESULTS_DIR = "Florian/results/regression/comparison_2D"
+COMPARISON_2D_DIR = f"{REGRESSION_RESULTS_DIR}"
 JOBLIB_DIR = "Florian/surrogate_models/joblibs"
 
 OPEX_COLUMNS = ["opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"]
@@ -60,6 +60,7 @@ def train_and_save_regressions(
         output_dir: str,
         output_suffix: str,
         test_target_multiplier_column: str | None = None,
+        fit_intercept: bool = True,
 ):
     x_train = df_train[train_feature_columns]
     x_test = df_test[test_feature_columns].copy()
@@ -78,7 +79,7 @@ def train_and_save_regressions(
         if test_target_multiplier_column is not None:
             y_test = y_test * df_test[test_target_multiplier_column]
         
-        regression_model = LinearRegression()
+        regression_model = LinearRegression(fit_intercept=fit_intercept)
         regression_model.fit(x_train, y_train)
 
         y_pred = regression_model.predict(x_test)
@@ -96,11 +97,11 @@ def train_and_save_regressions(
             "y_pred": y_pred,
             "r2": r2,
         })
-        validation_path = f"{output_dir}/2d_validation_{output_suffix}_{target}.csv"
+        validation_path = f"{output_dir}/2d_sampling_1d_training_validation_{output_suffix}_{target}.csv"
         validation_df.to_csv(validation_path, index=False)
         print(f"Validation gespeichert unter: {validation_path}")
 
-        joblib_path = f"{JOBLIB_DIR}/surrogate_model_{output_suffix}_{target}.joblib"
+        joblib_path = f"{JOBLIB_DIR}/surrogate_model_2d_sampling_1d_training_{output_suffix}_{target}.joblib"
         joblib.dump(regression_model, joblib_path)
         print(f"Modell gespeichert unter: {joblib_path}")
 
@@ -135,8 +136,9 @@ def run_2d_price_training():
         train_target_columns=PRICE_2D_TARGET_COLUMNS,
         test_target_columns=PRICE_2D_TARGET_COLUMNS,
         output_dir=COMPARISON_2D_DIR,
-        output_suffix="2d_prices_40",
+        output_suffix="2d",
         test_target_multiplier_column="c_e",
+        fit_intercept=False,
     )
 
 

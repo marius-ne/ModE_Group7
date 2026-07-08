@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-MARIUS_DIR = ROOT / "Marius"
+MARIUS_DIR = ROOT / "Marius" / "OUTDATED"
 sys.path.insert(0, str(MARIUS_DIR))
 
 from formulation_MILP import solve as solve_milp

@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 
 sys.path.append("Erdem")
-sys.path.append("Marius")
+sys.path.append("Marius/OUTDATED")
 
 from src.optimization.core import solve_lp_lower
 from formulation_LP_lower import plot_dispatch_results

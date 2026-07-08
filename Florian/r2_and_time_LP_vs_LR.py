@@ -21,8 +21,8 @@ import pandas as pd
 from sklearn.metrics import r2_score
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MARIUS_DIR = ROOT / "Marius"
+ROOT = Path(__file__).resolve().parents[2]
+MARIUS_DIR = ROOT / "Marius" / "OUTDATED"
 sys.path.insert(0, str(MARIUS_DIR))
 
 from formulation_LP_lower import solve as solve_lp_lower

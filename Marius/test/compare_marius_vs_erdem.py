@@ -29,7 +29,7 @@ MIP_GAP    = 1e-2
 # ---------------------------------------------------------------------------
 # Imports
 # ---------------------------------------------------------------------------
-sys.path.insert(0, "Marius")
+sys.path.insert(0, "Marius/OUTDATED")
 import formulation_MILP          as _marius_milp
 import formulation_LP_lower      as _marius_lp_lower
 import formulation_LP_upper      as _marius_lp_upper

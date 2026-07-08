@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT / "Erdem"))
 from src.visualization.style import get_figsize, reset_plot_settings
 
 
-RESULTS_DIR = Path("Florian/results/regression/comparison_2D")
-TRAIN_DATA_PATH = Path("Marius/results/opex_LHS_2D_sample.csv")
+RESULTS_DIR = Path("Florian/results/regression")
+TRAIN_DATA_PATH = Path("Marius/results/evaluation_log_samples.csv")
 TEST_DATA_PATH = Path("Marius/results/opex_random_sample_10.csv")
 
 # Select what this script should generate:
@@ -40,10 +40,10 @@ PLOT_MODE = "train_test_all_models"
 SELECTED_MODEL = "opex_milp"
 
 MODEL_PATHS = {
-    "opex_milp": Path("Florian/surrogate_model_opex_milp.joblib"),
-    "opex_lp_lower": Path("Florian/surrogate_model_opex_lp_lower.joblib"),
-    "opex_lp_upper": Path("Florian/surrogate_model_opex_lp_upper.joblib"),
-    "opex_lp_approx": Path("Florian/surrogate_model_opex_lp_approx.joblib"),
+    "opex_milp": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_milp.joblib"),
+    "opex_lp_lower": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_lp_lower.joblib"),
+    "opex_lp_upper": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_lp_upper.joblib"),
+    "opex_lp_approx": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_lp_approx.joblib"),
 }
 
 VALIDATION_FILES = {
@@ -75,7 +75,7 @@ TEST_TARGET_COLUMNS = {
     "opex_milp": "opex_milp",
     "opex_lp_lower": "opex_lp_lower",
     "opex_lp_upper": "opex_lp_upper",
-    "opex_lp_approx": "opex_lp_approximated",
+    "opex_lp_approx": "opex_lp_approx",
 }
 
 
@@ -322,7 +322,7 @@ def plot_train_and_test_data_for_all_models():
         ax.set_yscale("log")
 
     axes[-1].set_xlabel("Ratio")
-    fig.suptitle("Training and Test Data with Regression Lines", y=0.995)
+    fig.suptitle("Training and Test Data, 1D Log Sampling", y=0.995)
     fig.tight_layout()
 
     plot_path = RESULTS_DIR / "train_test_regression_lines_all_models_log.png"

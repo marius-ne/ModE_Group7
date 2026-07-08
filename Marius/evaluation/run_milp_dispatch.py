@@ -8,7 +8,7 @@ import matplotlib.colors as mcolors
 from pathlib import Path
 
 sys.path.append("Erdem")
-sys.path.append("Marius")
+sys.path.append("Marius/OUTDATED")
 
 from src.optimization.core import solve_milp
 from formulation_MILP import plot_dispatch_results

@@ -11,21 +11,32 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-MARIUS_DIR = ROOT / "Marius"
-sys.path.insert(0, str(MARIUS_DIR))
+sys.path.insert(0, str(ROOT / "Erdem"))
 
-from formulation_MILP import solve as solve_milp
-from formulation_LP_lower import solve as solve_lp_lower
-from formulation_LP_upper import solve as solve_lp_upper
-from formulation_LP_approximated import solve as solve_lp_approximated
+from src.optimization.core import (
+    solve_lp_approximated,
+    solve_lp_lower,
+    solve_lp_upper,
+    solve_milp,
+)
 
 
 PRICE_SAMPLES_CSV = ROOT / "Erdem" / "results" / "Sampling" / "training" / "lhs_40_samples.csv"
 OUTPUT_CSV = ROOT / "Marius" / "results" / "opex_discrete_prices_lhs_40.csv"
+DEMAND_CSV = ROOT / "Erdem" / "energy_demands.csv"
+
+
+def load_demands():
+    demand_df = pd.read_csv(DEMAND_CSV)
+    q_d = demand_df["hourly heat demand [kW]"].to_numpy()
+    p_d = demand_df["hourly electricity demand [kW]"].to_numpy()
+    return q_d, p_d
 
 
 def main():
     samples = pd.read_csv(PRICE_SAMPLES_CSV)
+    q_d, p_d = load_demands()
+    strict_demand_satisfaction = True
 
     rows = []
     for i, sample in samples.iterrows():
@@ -37,10 +48,36 @@ def main():
             f"c_G={c_G:.6f} EUR/kWh  c_el={c_el:.6f} EUR/kWh"
         )
 
-        opex_milp, _ = solve_milp(c_G, c_el, mip_gap=1e-3)
-        opex_lower, _ = solve_lp_lower(c_G, c_el)
-        opex_upper, _ = solve_lp_upper(c_G, c_el)
-        opex_approx, _ = solve_lp_approximated(c_G, c_el, mode="mean_efficiency")
+        opex_milp, _ = solve_milp(
+            q_d,
+            p_d,
+            c_G,
+            c_el,
+            mip_gap=1e-2,
+            strict_demand_satisfaction=strict_demand_satisfaction,
+        )
+        opex_lower, _ = solve_lp_lower(
+            q_d,
+            p_d,
+            c_G,
+            c_el,
+            strict_demand_satisfaction=strict_demand_satisfaction,
+        )
+        opex_upper, _ = solve_lp_upper(
+            q_d,
+            p_d,
+            c_G,
+            c_el,
+            strict_demand_satisfaction=strict_demand_satisfaction,
+        )
+        opex_approx, _ = solve_lp_approximated(
+            q_d,
+            p_d,
+            c_G,
+            c_el,
+            mode="mean_efficiency",
+            strict_demand_satisfaction=strict_demand_satisfaction,
+        )
 
         rows.append({
             "c_G": c_G,
@@ -48,12 +85,12 @@ def main():
             "opex_milp": opex_milp,
             "opex_lp_lower": opex_lower,
             "opex_lp_upper": opex_upper,
-            "opex_lp_approximated": opex_approx,
+            "opex_lp_approx": opex_approx,
         })
 
         print(
             f"  MILP={opex_milp:,.2f}  LP_lower={opex_lower:,.2f}  "
-            f"LP_upper={opex_upper:,.2f}  LP_approximated={opex_approx:,.2f}"
+            f"LP_upper={opex_upper:,.2f}  LP_approx={opex_approx:,.2f}"
         )
 
     OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
