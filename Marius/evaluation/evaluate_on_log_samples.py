@@ -14,14 +14,14 @@ _P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 c_el = 1.0
 strict_demand_satisfaction = True
 
-ratios = pd.read_csv("Erdem/results/Sampling/training/log_5_samples.csv")["ratios"].values
+ratios = pd.read_csv("Erdem/results/Sampling/training/log_40_samples.csv")["ratios"].values
 
 rows = []
 for i, ratio in enumerate(ratios):
     c_G = c_el * ratio
     print(f"[{i+1}/{len(ratios)}] ratio={ratio:.6f}  c_G={c_G:.6f}")
 
-    opex_milp   = solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=1e-2, strict_demand_satisfaction=strict_demand_satisfaction)[0]
+    opex_milp   = solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=1e-3, strict_demand_satisfaction=strict_demand_satisfaction)[0]
     opex_lower  = solve_lp_lower(_Q_D, _P_D, c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
     opex_upper  = solve_lp_upper(_Q_D, _P_D, c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
     opex_approx = solve_lp_approximated(_Q_D, _P_D, c_G, c_el, mode="mean_efficiency", strict_demand_satisfaction=strict_demand_satisfaction)[0]
@@ -36,7 +36,7 @@ for i, ratio in enumerate(ratios):
     print(f"  MILP={opex_milp:,.2f}  LP_lower={opex_lower:,.2f}  LP_upper={opex_upper:,.2f}  LP_approx={opex_approx:,.2f}")
 
 df = pd.DataFrame(rows)
-out_path = "Marius/results/evaluation_log_samples_5.csv"
+out_path = "Marius/results/evaluation_log_samples_40.csv"
 df.to_csv(out_path, index=False)
 print(f"\nSaved {len(df)} rows to {out_path}")
 
@@ -69,7 +69,7 @@ ax.legend(**LEGEND_KW)
 ax.grid(True, which="both", ls="--", alpha=0.5)
 fig.tight_layout()
 
-plot_path = "Marius/visualization/evaluation_log_samples.png"
+plot_path = "Marius/visualization/evaluation_log_samples_40.png"
 fig.savefig(plot_path, dpi=150)
 print(f"Plot saved to {plot_path}")
 plt.show()
