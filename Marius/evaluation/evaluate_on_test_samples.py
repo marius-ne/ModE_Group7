@@ -21,11 +21,12 @@ from pathlib import Path
 from _evaluation_common import generate_points, generate_shared_test_points, derive_1d_from_2d, solve_all
 
 SAMPLING_MODE = "1D"  # "1D" -> price ratio (gas/electricity), "2D" -> (gas_price, electricity_price) pair
+# for 2D: c_g and c_el are given in €/Mwh in output, but optimzation function calcualtes with €/Kwh! -> for post processing multiply OPEX specific with c_el/1000 
 N_TEST = 10
 
 
 def default_out_csv(sampling_mode: str) -> Path:
-    return Path(f"Marius/results/evaluation_test_samples_{sampling_mode}.csv")
+    return Path(f"Marius/results/evaluation_10_test_samples_{sampling_mode}.csv")
 
 
 def run(sampling_mode: str = SAMPLING_MODE, n_test: int = N_TEST, out_csv: Path = None):

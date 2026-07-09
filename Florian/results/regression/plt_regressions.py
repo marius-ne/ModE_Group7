@@ -19,9 +19,9 @@ sys.path.insert(0, str(ROOT / "Erdem"))
 from src.visualization.style import get_figsize, reset_plot_settings
 
 
-RESULTS_DIR = Path("Florian/results/regression")
-TRAIN_DATA_PATH = Path("Marius/results/evaluation_log_samples.csv")
-TEST_DATA_PATH = Path("Marius/results/opex_random_sample_10.csv")
+RESULTS_DIR = Path("Florian/validation/visualization")
+TRAIN_DATA_PATH = Path("Marius/results/evaluation_training_samples_1D_angle.csv")
+TEST_DATA_PATH = Path("Marius/results/evaluation_10_test_samples_1D.csv")
 
 # Select what this script should generate:
 # "all"                         -> regenerate every plot defined in this file
@@ -40,17 +40,17 @@ PLOT_MODE = "train_test_all_models"
 SELECTED_MODEL = "opex_milp"
 
 MODEL_PATHS = {
-    "opex_milp": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_milp.joblib"),
-    "opex_lp_lower": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_lp_lower.joblib"),
-    "opex_lp_upper": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_lp_upper.joblib"),
-    "opex_lp_approx": Path("Florian/surrogate_models/joblibs/surrogate_model_ratio_opex_lp_approx.joblib"),
+    "opex_milp": Path("Florian/validation/joblibs/40_ratio_opex_milp.joblib"),
+    "opex_lp_lower": Path("Florian/validation/joblibs/40_ratio_opex_lp_lower.joblib"),
+    "opex_lp_upper": Path("Florian/validation/joblibs/40_ratio_opex_lp_upper.joblib"),
+    "opex_lp_approx": Path("Florian/validation/joblibs/40_ratio_opex_lp_approx.joblib"),
 }
 
 VALIDATION_FILES = {
-    "opex_milp": RESULTS_DIR / "validation_opex_milp.csv",
-    "opex_lp_lower": RESULTS_DIR / "validation_opex_lp_lower.csv",
-    "opex_lp_upper": RESULTS_DIR / "validation_opex_lp_upper.csv",
-    "opex_lp_approx": RESULTS_DIR / "validation_opex_lp_approx.csv",
+    "opex_milp": RESULTS_DIR / "40_train_10_test_ratio_opex_milp.csv",
+    "opex_lp_lower": RESULTS_DIR / "40_train_10_test_ratio_lp_lower.csv",
+    "opex_lp_upper": RESULTS_DIR / "40_train_10_test_ratio_lp_upper.csv",
+    "opex_lp_approx": RESULTS_DIR / "40_train_10_test_ratio_lp_approx.csv",
 }
 
 COLORS = {
@@ -248,7 +248,7 @@ def plot_train_and_test_data_for_model(model_name):
     plt.legend()
     plt.tight_layout()
 
-    plot_path = RESULTS_DIR / f"train_test_regression_line_{model_name}.png"
+    plot_path = RESULTS_DIR / f"40_train_test_regression_line_{model_name}.png"
     plt.savefig(plot_path, dpi=300)
     plt.close()
     print(f"Training/test plot saved to: {plot_path}")
@@ -318,8 +318,7 @@ def plot_train_and_test_data_for_all_models():
         ax.set_title(model_label)
         ax.grid(True)
         ax.legend()
-        ax.set_xscale("log")
-        ax.set_yscale("log")
+        
 
     axes[-1].set_xlabel("Ratio")
     fig.suptitle("Training and Test Data, 1D Log Sampling", y=0.995)

@@ -11,20 +11,20 @@ from pathlib import Path
 from _evaluation_common import generate_points, solve_all
 
 SAMPLING_MODE = "1D"  # "1D" -> price ratio (gas/electricity), "2D" -> (gas_price, electricity_price) pair
-N_TRAIN = 40
+N_TRAIN = 2
 SAMPLING_METHOD_2D = "lhs"  # training sampling method for 2D mode ("sobol", "lhs" or "random")
-SAMPLING_METHOD_1D = "log"  # training sampling method for 1D mode ("log" or "angle")
+SAMPLING_METHOD_1D = "angle"  # training sampling method for 1D mode ("log" or "angle")
 
 
 def default_out_csv(sampling_mode: str) -> Path:
-    return Path(f"Marius/results/evaluation_training_samples_{sampling_mode}.csv")
+    return Path(f"Marius/results/evaluation_{N_TRAIN}_training_samples_{sampling_mode}.csv")
 
 
 def run(sampling_mode: str = SAMPLING_MODE, n_train: int = N_TRAIN, method_2d: str = SAMPLING_METHOD_2D,
         method_1d: str = SAMPLING_METHOD_1D, out_csv: Path = None):
     """Generate n_train training points and solve the 4 optimization formulations for them.
 
-    Saves the result to out_csv (default: Marius/results/evaluation_training_samples_<mode>.csv)
+    Saves the result to out_csv (default: Marius/results/evaluation_{N_TRAIN}_training_samples_{sampling_mode}.csv)
     and returns it as a DataFrame.
     """
     out_csv = out_csv or default_out_csv(sampling_mode)

@@ -11,14 +11,14 @@ from sklearn.metrics import mean_squared_error, r2_score
 # "prices_2d" -> two features, concrete gas and electricity prices: c_G and c_el
 TRAINING_MODE = "ratio"  # "ratio" or "prices_2d"
 
-RATIO_TRAINING_FILE = "Marius/results/opex_specific_LHS_2D_sample_40_.csv"
-RATIO_TEST_FILE = "Marius/results/opex_random_sample_10.csv"
+RATIO_TRAINING_FILE = "Marius/results/evaluation_5_training_samples_1D.csv"
+RATIO_TEST_FILE = "Marius/results/evaluation_10_test_samples_1D.csv"
 
 PRICE_2D_TRAINING_FILE = "Marius/results/opex_discrete_prices_lhs_40.csv"
 
-REGRESSION_RESULTS_DIR = "Florian/results/regression/comparison_2D"
+REGRESSION_RESULTS_DIR = "Florian/validation"
 COMPARISON_2D_DIR = f"{REGRESSION_RESULTS_DIR}"
-JOBLIB_DIR = "Florian/surrogate_models/joblibs"
+JOBLIB_DIR = "Florian/validation/joblibs"
 
 OPEX_COLUMNS = ["opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"]
 
@@ -97,11 +97,11 @@ def train_and_save_regressions(
             "y_pred": y_pred,
             "r2": r2,
         })
-        validation_path = f"{output_dir}/2d_sampling_1d_training_validation_{output_suffix}_{target}.csv"
+        validation_path = f"{output_dir}/5_train_10_test_{output_suffix}_{target}.csv"
         validation_df.to_csv(validation_path, index=False)
         print(f"Validation gespeichert unter: {validation_path}")
 
-        joblib_path = f"{JOBLIB_DIR}/surrogate_model_2d_sampling_1d_training_{output_suffix}_{target}.joblib"
+        joblib_path = f"{JOBLIB_DIR}/5_{output_suffix}_{target}.joblib"
         joblib.dump(regression_model, joblib_path)
         print(f"Modell gespeichert unter: {joblib_path}")
 

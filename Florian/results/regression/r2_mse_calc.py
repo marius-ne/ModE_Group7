@@ -6,25 +6,34 @@ from sklearn.metrics import mean_squared_error, r2_score
 
 # Auswahlmoeglichkeit:
 # "inter_model_r2" = bisherige Auswertung wie zuvor
-# "compared_to_milp_r2" = alle y_pred gegen das echte MILP-OPEX aus Marius/results/opex_random_sample_10.csv
+# "compared_to_milp_r2" = alle y_pred gegen das echte MILP-OPEX aus MILP_TEST_FILE
 # "mse_vs_milp" = MILP-Testwerte mit y_pred eines waehlbaren Modells per MSE vergleichen
 RUN_MODE = "compared_to_milp_r2"  # "inter_model_r2", "compared_to_milp_r2", "mse_vs_milp"
 # MSE_MODEL = "MILP_pred"
 # USE_ACTUAL_MILP_OPEX = True
 
-RESULTS_DIR = Path("Florian/results/regression")
+RESULTS_DIR = Path("Florian/validation")
 MARIUS_RESULTS_DIR = Path("Marius/results")
+MILP_TEST_FILE = MARIUS_RESULTS_DIR / "evaluation_10_test_samples_1D.csv"
 
-MODEL_FILES = {
-    "MILP_pred": RESULTS_DIR / "validation_5_opex_milp.csv",
-    "LP_Upper": RESULTS_DIR / "validation_5_opex_lp_upper.csv",
-    "LP_Lower": RESULTS_DIR / "validation_5_opex_lp_lower.csv",
-    "LP_Approx": RESULTS_DIR / "validation_5_opex_lp_approx.csv",
-}
+
+def test_sample_size(test_file: Path = MILP_TEST_FILE) -> int:
+    return len(pd.read_csv(test_file))
+
+
+def model_files(test_size = "5"):
+ 
+
+    return {
+        "MILP_pred": RESULTS_DIR / f"{test_size}_train_10_test_ratio_opex_milp.csv",
+        "LP_Upper": RESULTS_DIR / f"{test_size}_train_10_test_ratio_opex_lp_upper.csv",
+        "LP_Lower": RESULTS_DIR / f"{test_size}_train_10_test_ratio_opex_lp_lower.csv",
+        "LP_Approx": RESULTS_DIR / f"{test_size}_train_10_test_ratio_opex_lp_approx.csv",
+    }
 
 
 def load_validation_predictions():
-    return {model: pd.read_csv(path) for model, path in MODEL_FILES.items()}
+    return {model: pd.read_csv(path) for model, path in model_files().items()}
 
 
 def run_original_comparison():
@@ -97,11 +106,11 @@ def run_original_comparison():
         ]
     )
     print(r2_df)
-    r2_df.to_csv(RESULTS_DIR / "r2_score_5_compared.csv", index=False)
+    r2_df.to_csv(RESULTS_DIR / f"{test_sample_size()}_r2_score_compared.csv", index=False)
 
 
 def run_milp_opex_actual_comparison():
-    df_actual_milp = pd.read_csv(MARIUS_RESULTS_DIR / "opex_random_sample_10.csv")
+    df_actual_milp = pd.read_csv(MILP_TEST_FILE)
     validation_data = load_validation_predictions()
 
     y_actual = df_actual_milp["opex_milp"]
@@ -112,7 +121,7 @@ def run_milp_opex_actual_comparison():
     for model, df_validation in validation_data.items():
         if len(df_validation) != len(y_actual):
             raise ValueError(
-                f"{model} hat {len(df_validation)} Zeilen, aber opex_random_sample_10.csv "
+                f"{model} hat {len(df_validation)} Zeilen, aber {MILP_TEST_FILE} "
                 f"hat {len(y_actual)} Zeilen. R2 kann so nicht sauber berechnet werden."
             )
 
@@ -134,20 +143,24 @@ def run_milp_opex_actual_comparison():
     r2_df["delta_to_milp_pred"] = r2_df["r2_compared_to_actual_milp_opex"] - milp_r2
 
     print(r2_df)
-    r2_df.to_csv(RESULTS_DIR / "r2_score_5_compared_to_actual_milp_opex.csv", index=False)
+    r2_df.to_csv(
+        RESULTS_DIR / f"{len(df_actual_milp)}_r2_score_compared_to_milp.csv",
+        index=False,
+    )
 
 
 def compare_milp_test_values_to_model_predictions(model_name, use_actual_milp_opex=True):
-    if model_name not in MODEL_FILES:
-        raise ValueError(f"model_name muss eines von {list(MODEL_FILES)} sein.")
+    files = model_files()
+    if model_name not in files:
+        raise ValueError(f"model_name muss eines von {list(files)} sein.")
 
-    df_validation = pd.read_csv(MODEL_FILES[model_name])
+    df_validation = pd.read_csv(files[model_name])
 
     if use_actual_milp_opex:
-        df_milp = pd.read_csv(MARIUS_RESULTS_DIR / "opex_random_sample_10.csv")
+        df_milp = pd.read_csv(MILP_TEST_FILE)
         y_milp_test = df_milp["opex_milp"]
     else:
-        y_milp_test = pd.read_csv(MODEL_FILES["MILP_pred"])["y_test"]
+        y_milp_test = pd.read_csv(files["MILP_pred"])["y_test"]
 
     if len(df_validation) != len(y_milp_test):
         raise ValueError(
