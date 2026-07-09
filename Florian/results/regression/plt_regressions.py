@@ -19,9 +19,9 @@ sys.path.insert(0, str(ROOT / "Erdem"))
 from src.visualization.style import get_figsize, reset_plot_settings
 
 
-RESULTS_DIR = Path("Florian/validation/visualization")
+RESULTS_DIR = Path("Florian/validation/results_1d_models")
 TRAIN_DATA_PATH = Path("Marius/results/evaluation_training_samples_1D_angle.csv")
-TEST_DATA_PATH = Path("Marius/results/evaluation_10_test_samples_1D.csv")
+TEST_DATA_PATH = Path("Marius/results/evaluation_lhs_10_test_1D.csv")
 
 # Select what this script should generate:
 # "all"                         -> regenerate every plot defined in this file
@@ -321,7 +321,7 @@ def plot_train_and_test_data_for_all_models():
         
 
     axes[-1].set_xlabel("Ratio")
-    fig.suptitle("Training and Test Data, 1D Log Sampling", y=0.995)
+    fig.suptitle("Training and Test Data, 1D Angle Sampling", y=0.995)
     fig.tight_layout()
 
     plot_path = RESULTS_DIR / "train_test_regression_lines_all_models_log.png"

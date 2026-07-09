@@ -9,12 +9,13 @@ from sklearn.metrics import mean_squared_error, r2_score
 # Choose which input should be used for training:
 # "ratio"     -> previous behavior: one feature, ratio = c_G / c_el
 # "prices_2d" -> two features, concrete gas and electricity prices: c_G and c_el
-TRAINING_MODE = "ratio"  # "ratio" or "prices_2d"
+TRAINING_MODE = "prices_2d"  # "ratio" or "prices_2d"
 
 RATIO_TRAINING_FILE = "Marius/results/evaluation_5_training_samples_1D.csv"
-RATIO_TEST_FILE = "Marius/results/evaluation_10_test_samples_1D.csv"
+RATIO_TEST_FILE = "Marius/results/evaluation_lhs_10_test_1D.csv"
 
-PRICE_2D_TRAINING_FILE = "Marius/results/opex_discrete_prices_lhs_40.csv"
+PRICE_2D_TRAINING_FILE = "Marius/results/evaluation_training_samples_2D.csv"
+PRICE_2D_TEST_FILE = "Marius/results/evaluation_lhs_10_test_2D.csv"
 
 REGRESSION_RESULTS_DIR = "Florian/validation"
 COMPARISON_2D_DIR = f"{REGRESSION_RESULTS_DIR}"
@@ -43,11 +44,53 @@ PRICE_2D_TARGET_COLUMNS = {
     "opex_lp_approx": "opex_lp_approx",
 }
 
+FEATURE_ALIASES = {
+    "ratio": ["ratio"],
+    "c_G": ["c_G", "gas_price_MWh", "gas_price"],
+    "c_el": ["c_el", "c_e", "electricity_price_MWh", "electricity_price", "actual_c_electricity"],
+}
+
 
 def ensure_output_dirs():
     os.makedirs(REGRESSION_RESULTS_DIR, exist_ok=True)
     os.makedirs(COMPARISON_2D_DIR, exist_ok=True)
     os.makedirs(JOBLIB_DIR, exist_ok=True)
+
+
+def find_feature_column(df: pd.DataFrame, canonical_feature: str) -> str:
+    for column in FEATURE_ALIASES.get(canonical_feature, [canonical_feature]):
+        if column in df.columns:
+            return column
+
+    raise ValueError(
+        f"Keine Spalte fuer Feature '{canonical_feature}' gefunden. "
+        f"Erwartet eine von {FEATURE_ALIASES.get(canonical_feature, [canonical_feature])}. "
+        f"Vorhandene Spalten: {list(df.columns)}"
+    )
+
+
+def build_feature_frame(df: pd.DataFrame, canonical_features: list[str]) -> pd.DataFrame:
+    features = pd.DataFrame(index=df.index)
+    column_mapping = {}
+
+    for feature in canonical_features:
+        source_column = find_feature_column(df, feature)
+        column_mapping[feature] = source_column
+        features[feature] = df[source_column]
+
+    print(f"Feature-Spaltenzuordnung: {column_mapping}")
+    return features
+
+
+def validate_3d_regression_without_offset(
+        feature_columns: list[str],
+        fit_intercept: bool,
+) -> None:
+    if set(feature_columns) == {"c_G", "c_el"} and fit_intercept:
+        raise ValueError(
+            "2D-Preis-Training erzeugt eine Regressionsebene im 3D-Raum. "
+            "Ein Offset/Intercept ist hier verboten: fit_intercept muss False sein."
+        )
 
 
 def train_and_save_regressions(
@@ -62,8 +105,9 @@ def train_and_save_regressions(
         test_target_multiplier_column: str | None = None,
         fit_intercept: bool = True,
 ):
-    x_train = df_train[train_feature_columns]
-    x_test = df_test[test_feature_columns].copy()
+    validate_3d_regression_without_offset(train_feature_columns, fit_intercept)
+    x_train = build_feature_frame(df_train, train_feature_columns)
+    x_test = build_feature_frame(df_test, test_feature_columns)
     x_test.columns = train_feature_columns
 
     for target in OPEX_COLUMNS:
@@ -81,6 +125,10 @@ def train_and_save_regressions(
         
         regression_model = LinearRegression(fit_intercept=fit_intercept)
         regression_model.fit(x_train, y_train)
+        if set(train_feature_columns) == {"c_G", "c_el"} and abs(regression_model.intercept_) > 1e-9:
+            raise RuntimeError(
+                f"Offset fuer 3D-Regression ist nicht null ({regression_model.intercept_})."
+            )
 
         y_pred = regression_model.predict(x_test)
         mse = mean_squared_error(y_test, y_pred)
@@ -97,11 +145,11 @@ def train_and_save_regressions(
             "y_pred": y_pred,
             "r2": r2,
         })
-        validation_path = f"{output_dir}/5_train_10_test_{output_suffix}_{target}.csv"
+        validation_path = f"{output_dir}/2D_40_train_10_test_{output_suffix}_{target}.csv"
         validation_df.to_csv(validation_path, index=False)
         print(f"Validation gespeichert unter: {validation_path}")
 
-        joblib_path = f"{JOBLIB_DIR}/5_{output_suffix}_{target}.joblib"
+        joblib_path = f"{JOBLIB_DIR}/2D_40_{output_suffix}_{target}.joblib"
         joblib.dump(regression_model, joblib_path)
         print(f"Modell gespeichert unter: {joblib_path}")
 
@@ -142,13 +190,32 @@ def run_2d_price_training():
     )
 
 
+def run_2d_price_training_with_discrete_absolute_test():
+    df_train = pd.read_csv(PRICE_2D_TRAINING_FILE)
+    df_test = pd.read_csv(PRICE_2D_TEST_FILE)
+
+    print(f"Verwende 2D-Preis-Training: {PRICE_2D_TRAINING_FILE}")
+    print(f"Teste gegen diskrete Preise mit absoluten OPEX-Werten: {PRICE_2D_TEST_FILE}")
+    train_and_save_regressions(
+        df_train=df_train,
+        df_test=df_test,
+        train_feature_columns=["c_G", "c_el"],
+        test_feature_columns=["c_G", "c_el"],
+        train_target_columns=PRICE_2D_TARGET_COLUMNS,
+        test_target_columns=PRICE_2D_TARGET_COLUMNS,
+        output_dir=COMPARISON_2D_DIR,
+        output_suffix="2d_discrete_absolute",
+        fit_intercept=False,
+    )
+
+
 def main():
     ensure_output_dirs()
 
     if TRAINING_MODE == "ratio":
         run_ratio_training()
     elif TRAINING_MODE == "prices_2d":
-        run_2d_price_training()
+        run_2d_price_training_with_discrete_absolute_test()
     else:
         raise ValueError('TRAINING_MODE must be either "ratio" or "prices_2d".')
 

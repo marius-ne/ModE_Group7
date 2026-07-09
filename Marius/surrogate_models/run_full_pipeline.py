@@ -51,7 +51,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import evaluate_on_training_samples
-import evaluate_on_test_samples
 import train_surrogate_models as trainer
 from _evaluation_common import derive_1d_from_2d
 
@@ -66,12 +65,28 @@ TRAIN_SOURCE_OF = {
 }
 # Which training data (key into train_csv_of) each mode uses.
 TRAIN_KEY_OF = {"1D_log": "1D_log", "1D_angle": "1D_angle", "2D": "2D", "2D_noY": "2D", "1D_eqv": "1D_eqv"}
-# Which shared test set each mode is evaluated on.
+# Which test set each mode is evaluated on.
 TEST_KEY_OF = {"1D_log": "1D", "1D_angle": "1D", "2D": "2D", "2D_noY": "2D", "1D_eqv": "1D"}
-FIT_INTERCEPT_OF = {"1D_log": True, "1D_angle": True, "2D": True, "2D_noY": False, "1D_eqv": True}
+FIT_INTERCEPT_OF = {"1D_log": True, "1D_angle": True, "2D": False, "2D_noY": False, "1D_eqv": True}
 
 N_TRAIN = 40
 N_TEST = 40  # size of the single shared test set used by every mode
+TEST_SAMPLING_METHOD_2D = "lhs"  # "lhs", "sobol" or "random"
+TEST_N_CORNER = 0  # set to 0 to keep corners out of the test sample
+TEST_N_EDGES = 0
+
+# Separate already-evaluated 2D test set with absolute OPEX columns. The first
+# existing path is used; edit/add paths here if your file has another name.
+TWO_D_TEST_CSV_CANDIDATES = [
+    Path("Marius/results/evaluation_lhs_test_2D.csv"),
+    Path("Marius/results/evalutation_lhs_test_2D.csv"),
+    Path("Marius/results/evaluation_lhs_10_test_2D.csv"),
+]
+ONE_D_TEST_CSV_CANDIDATES = [
+    Path("Marius/results/evaluation_lhs_test_1D.csv"),
+    Path("Marius/results/evalutation_lhs_test_1D.csv"),
+    Path("Marius/results/evaluation_lhs_10_test_1D.csv"),
+]
 
 # If True, reuse an existing evaluation_{training,test}_samples_<mode>.csv instead of
 # re-solving the optimization problems, when both files are already present on disk.
@@ -87,6 +102,23 @@ MODELS_DIR = OUT_DIR / "models"
 
 
 Y_PAD_FRAC = 0.1  # fraction of the value range added as padding below/above the bars
+
+
+def first_existing_or_default(paths: list[Path]) -> Path:
+    """Return the first existing path, or the first configured path if none exists."""
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+def default_generated_test_csv(sampling_mode: str) -> Path:
+    boundary_tag = (
+        "no_bounds" if TEST_N_CORNER == 0 and TEST_N_EDGES == 0
+        else f"{TEST_N_CORNER}corners_{TEST_N_EDGES}edges"
+    )
+    tag = f"{TEST_SAMPLING_METHOD_2D.lower()}_{boundary_tag}"
+    return Path(f"Marius/results/evaluation_{N_TEST}_test_samples_{tag}_{sampling_mode}.csv")
 
 
 def _set_ylim_with_padding(ax, all_train_r2: dict, all_test_r2: dict, pad_frac: float = Y_PAD_FRAC):
@@ -137,7 +169,7 @@ def compare_r2(all_train_r2: dict, all_test_r2: dict):
 
     plt.suptitle(
         "Surrogate model $R^2$ — 1D_log / 1D_angle (ratio → specific OPEX, different ratio sampling)  |  "
-        "2D (price pair → absolute OPEX, with intercept)  |  "
+        "2D (price pair → absolute OPEX, no intercept)  |  "
         "2D_noY (same data, no intercept)  |  "
         "1D_eqv (2D's training data, converted to ratio → specific OPEX)",
         fontsize=10,
@@ -198,14 +230,16 @@ def compare_r2_vs_milp(train_csv_of: dict, test_csv_of: dict, unit: str = MILP_C
     already trained and saved to disk by main() -- no re-solving.
     """
     df_2d_train = pd.read_csv(train_csv_of["2D"])
+    df_1d_test = pd.read_csv(test_csv_of["1D"])
     df_2d_test = pd.read_csv(test_csv_of["2D"])
+    aligned_2d_test = df_2d_test if len(df_2d_test) == len(df_1d_test) else None
     # mode -> (aligned 2D train df or None, aligned 2D test df or None)
     aligned_2d_of = {
-        "1D_log": (None, df_2d_test),
-        "1D_angle": (None, df_2d_test),
+        "1D_log": (None, aligned_2d_test),
+        "1D_angle": (None, aligned_2d_test),
         "2D": (None, None),
         "2D_noY": (None, None),
-        "1D_eqv": (df_2d_train, df_2d_test),
+        "1D_eqv": (df_2d_train, aligned_2d_test),
     }
 
     all_train_r2 = {}
@@ -270,19 +304,58 @@ def main():
     all_train_r2 = {}
     all_test_r2 = {}
 
-    # --- Shared test set: same underlying uniformly-random price scenarios for every mode ---
-    test_csv_of = {
-        "1D": Path("Marius/results/evaluation_test_samples_1D.csv"),
-        "2D": Path("Marius/results/evaluation_test_samples_2D.csv"),
+    # --- Test sets ---------------------------------------------------------------
+    # 1D-family modes keep using the generated/derived shared 1D test set.
+    # 2D-family modes use a separately stored 2D CSV with absolute OPEX columns.
+    one_d_test_csv = first_existing_or_default([
+        default_generated_test_csv("1D"),
+        *ONE_D_TEST_CSV_CANDIDATES,
+    ])
+    generated_test_csv_of = {
+        "1D": one_d_test_csv,
+        "2D": default_generated_test_csv("2D"),
     }
-    if REUSE_EXISTING_DATA and all(p.exists() for p in test_csv_of.values()):
-        print(f"\n{'#' * 60}\n# Reusing existing shared test data\n{'#' * 60}")
-        print("  " + "\n  ".join(str(p) for p in test_csv_of.values()))
-    else:
-        print(f"\n{'#' * 60}\n# Generating shared test set (n={N_TEST}, uniform random)\n{'#' * 60}")
-        evaluate_on_test_samples.run_shared(
-            N_TEST, out_csv_2d=test_csv_of["2D"], out_csv_1d=test_csv_of["1D"]
+    separate_2d_test_csv = first_existing_or_default(TWO_D_TEST_CSV_CANDIDATES)
+    test_csv_of = {
+        "1D": generated_test_csv_of["1D"],
+        "2D": separate_2d_test_csv,
+    }
+
+    if not separate_2d_test_csv.exists():
+        raise FileNotFoundError(
+            "Separate 2D test CSV does not exist. Checked/configured paths: "
+            + ", ".join(str(path) for path in TWO_D_TEST_CSV_CANDIDATES)
         )
+
+    print(f"\n{'#' * 60}\n# Using separate 2D test data\n{'#' * 60}")
+    print(f"  {separate_2d_test_csv}")
+
+    if REUSE_EXISTING_DATA and generated_test_csv_of["1D"].exists():
+        print(f"\n{'#' * 60}\n# Reusing existing 1D test data\n{'#' * 60}")
+        print(f"  {generated_test_csv_of['1D']}")
+    else:
+        print(
+            f"\n{'#' * 60}\n"
+            f"# Generating shared 1D test set "
+            f"(n={N_TEST}, {TEST_SAMPLING_METHOD_2D}, corners={TEST_N_CORNER}, edges={TEST_N_EDGES})\n"
+            f"{'#' * 60}"
+        )
+        import evaluate_on_test_samples
+
+        evaluate_on_test_samples.run_shared(
+            N_TEST,
+            out_csv_2d=generated_test_csv_of["2D"],
+            out_csv_1d=generated_test_csv_of["1D"],
+            test_method_2d=TEST_SAMPLING_METHOD_2D,
+            n_corner=TEST_N_CORNER,
+            n_edges=TEST_N_EDGES,
+        )
+
+    # Keep test_csv_of explicit after generation so 2D stays the separate file.
+    test_csv_of = {
+        "1D": generated_test_csv_of["1D"],
+        "2D": separate_2d_test_csv,
+    }
 
     # --- Per-key training data (2D_noY reuses "2D"; 1D_eqv is derived from "2D", no re-solving) ---
     train_csv_of = {}  # train key -> train_csv

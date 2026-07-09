@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.append("Erdem")
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "Erdem"))
 from src.sampling.core import create_sample
 from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_upper, solve_lp_approximated
 
@@ -21,46 +22,74 @@ C_EL_REF = 1.0  # reference electricity price [€/kWh] used to derive c_gas = r
 
 OPEX_COLUMNS = ["opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"]
 
-_demand_df = pd.read_csv(Path("energy_demands.csv"))
+_demand_df = pd.read_csv(ROOT / "energy_demands.csv")
 Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
 P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 
 
-def generate_points(sampling_mode: str, n: int, is_train: bool, method_2d: str = "sobol",
-                     method_1d: str = "log") -> pd.DataFrame:
+def generate_points(
+        sampling_mode: str,
+        n: int,
+        is_train: bool,
+        method_2d: str = "sobol",
+        method_1d: str = "log",
+        test_method_2d: str = "lhs",
+        test_n_corner: int = 0,
+        test_n_edges: int = 0,
+) -> pd.DataFrame:
     """Generate n sample points as either (gas_price_MWh, electricity_price_MWh) pairs or price ratios.
 
     :param sampling_mode: "2D" for price pairs, "1D" for price ratios.
-    :param is_train: training points use Sobol/LHS/log/angle; test points are drawn
-        i.i.d. uniformly at random within the price rectangle (see generate_shared_test_points).
+    :param is_train: training points use Sobol/LHS/log/angle; test points use
+        test_method_2d within the price rectangle (see generate_shared_test_points).
     :param method_2d: sampling method for 2D training mode ("sobol", "lhs" or "random").
     :param method_1d: sampling method for 1D training mode ("log" or "angle").
+    :param test_method_2d: sampling method for 2D test mode ("sobol", "lhs" or "random").
+    :param test_n_corner: number of corner points to force into 2D test samples.
+    :param test_n_edges: number of edge-midpoint points to force into 2D test samples.
     """
     if sampling_mode == "2D":
-        method = method_2d if is_train else "random"
-        df, _ = create_sample(method, n)
+        if is_train:
+            df, _ = create_sample(method_2d, n)
+        else:
+            return generate_shared_test_points(
+                n,
+                method_2d=test_method_2d,
+                n_corner=test_n_corner,
+                n_edges=test_n_edges,
+            )
         points = df[["gas_price", "electricity_price"]].reset_index(drop=True)
         return points.rename(columns={"gas_price": "gas_price_MWh", "electricity_price": "electricity_price_MWh"})
     elif sampling_mode == "1D":
         if is_train:
             ratios = create_sample(method_1d, n)
         else:
-            df = generate_shared_test_points(n)
+            df = generate_shared_test_points(
+                n,
+                method_2d=test_method_2d,
+                n_corner=test_n_corner,
+                n_edges=test_n_edges,
+            )
             ratios = df["gas_price_MWh"] / df["electricity_price_MWh"]
         return pd.DataFrame({"ratio": ratios.reset_index(drop=True)})
     else:
         raise ValueError(f"Unknown sampling_mode '{sampling_mode}', expected '1D' or '2D'.")
 
 
-def generate_shared_test_points(n: int) -> pd.DataFrame:
-    """Generate n (gas_price_MWh, electricity_price_MWh) pairs drawn i.i.d. uniformly at
-    random within the feasible price rectangle — Erdem's create_sample("random", ...).
+def generate_shared_test_points(
+        n: int,
+        method_2d: str = "lhs",
+        n_corner: int = 0,
+        n_edges: int = 0,
+) -> pd.DataFrame:
+    """Generate n (gas_price_MWh, electricity_price_MWh) pairs with the chosen
+    2D test sampling method.
 
     This is the single test-point generator every sampling mode's test set is built
     from (see derive_1d_from_2d), so 1D, 2D and 2D_noY are all evaluated on the exact
     same underlying price scenarios.
     """
-    df, _ = create_sample("random", n)
+    df, _ = create_sample(method_2d, n, n_corner=n_corner, n_edges=n_edges)
     points = df[["gas_price", "electricity_price"]].reset_index(drop=True)
     return points.rename(columns={"gas_price": "gas_price_MWh", "electricity_price": "electricity_price_MWh"})
 
