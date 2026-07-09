@@ -213,7 +213,7 @@ def load_samples(
         sample_file = base_dir / f"{sampling_method}{suffix}_samples.parquet"
         samples = pd.read_parquet(sample_file)
 
-        # Only load quality metrics for sobol/lhs
+        # Quality metrics
         quality_file = base_dir / f"{sampling_method}{suffix}_quality.json"
         with open(quality_file, "r") as f:
             dict_quality = json.load(f)

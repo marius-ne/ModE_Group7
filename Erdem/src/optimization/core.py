@@ -441,8 +441,8 @@ def save_optimization_results(
 
     try:
         # Save time series of optimized decision variables as parquet
-        parquet_path = base_dir / f"{file_stem}.parquet"
-        solution_df.to_parquet(parquet_path)
+        parquet_path = base_dir / f"{file_stem}.csv"
+        solution_df.to_csv(parquet_path)
 
         # Save metadata as JSON
         json_path = base_dir / f"{file_stem}.json"
