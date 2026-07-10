@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import joblib
@@ -15,10 +14,8 @@ import matplotlib.pyplot as plt
 ROOT = Path(__file__).resolve().parent
 
 # Existing project artefacts. Replace these paths if you want to compare other models.
-TEST_SAMPLE_CSV_CANDIDATES = [
-    ROOT / "Marius" / "results" / "evaluation_test_samples_2D.csv",
-    ROOT / "Marius" / "results" / "evaluation_10_test_samples_2D.csv",
-]
+RATIO_1D_TEST_CSV = ROOT / "Marius" / "results" / "evaluation_lhs_10_test_1D.csv"
+ABSOLUTE_2D_TEST_CSV = ROOT / "Marius" / "results" / "evaluation_lhs_10_test_2D.csv"
 ABSOLUTE_3D_MODEL_PATH = (
     ROOT / "Florian" / "surrogate_models" / "joblibs" / "surrogate_model_2d_prices_40_opex_milp.joblib"
 )
@@ -28,38 +25,31 @@ TARGET_COLUMN = "opex_milp"
 OUTPUT_PNG = ROOT / "ratio_vs_absolute_regression_error_bubbles.png"
 
 
-@dataclass
-class MockModel:
-    feature_names_in_: tuple[str, ...]
-
-    def predict(self, x: pd.DataFrame) -> np.ndarray:
-        if tuple(self.feature_names_in_) == ("ratio",):
-            return 60000 + 90000 * x["ratio"].to_numpy()
-        return 20000 + 80000 * x["c_G"].to_numpy() + 65000 * x["c_el"].to_numpy()
+def load_model(path: Path):
+    if not path.exists():
+        raise FileNotFoundError(f"Model file not found: {path}")
+    return joblib.load(path)
 
 
-def load_model_or_mock(path: Path, feature_names: tuple[str, ...]):
-    if path.exists():
-        return joblib.load(path)
+def load_test_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not RATIO_1D_TEST_CSV.exists():
+        raise FileNotFoundError(f"1D ratio test sample not found: {RATIO_1D_TEST_CSV}")
+    if not ABSOLUTE_2D_TEST_CSV.exists():
+        raise FileNotFoundError(f"2D absolute test sample not found: {ABSOLUTE_2D_TEST_CSV}")
 
-    print(f"Model not found, using mock model instead: {path}")
-    return MockModel(feature_names_in_=feature_names)
+    ratio_1d_df = pd.read_csv(RATIO_1D_TEST_CSV)
+    absolute_2d_df = pd.read_csv(ABSOLUTE_2D_TEST_CSV)
 
+    if len(ratio_1d_df) != 10:
+        raise ValueError(f"{RATIO_1D_TEST_CSV} must contain exactly 10 rows, found {len(ratio_1d_df)}.")
+    if len(absolute_2d_df) != 10:
+        raise ValueError(f"{ABSOLUTE_2D_TEST_CSV} must contain exactly 10 rows, found {len(absolute_2d_df)}.")
+    if len(ratio_1d_df) != len(absolute_2d_df):
+        raise ValueError("1D and 2D test samples must have the same number of rows.")
 
-def load_test_data() -> pd.DataFrame:
-    for path in TEST_SAMPLE_CSV_CANDIDATES:
-        if path.exists():
-            print(f"Using test sample: {path}")
-            return pd.read_csv(path)
-
-    print(f"No test sample found, using mock test data instead. Checked: {TEST_SAMPLE_CSV_CANDIDATES}")
-    return pd.DataFrame(
-        {
-            "gas_price_MWh": [65, 130, 235, 266, 90, 180, 310, 120],
-            "electricity_price_MWh": [260, 406, 385, 334, 180, 450, 510, 230],
-            TARGET_COLUMN: [18500, 33100, 47400, 49700, 21000, 44000, 69000, 28000],
-        }
-    )
+    print(f"Using 1D ratio test sample: {RATIO_1D_TEST_CSV}")
+    print(f"Using 2D absolute test sample: {ABSOLUTE_2D_TEST_CSV}")
+    return ratio_1d_df, absolute_2d_df
 
 
 def first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str:
@@ -75,29 +65,29 @@ def to_eur_per_kwh(values: pd.Series, column_name: str) -> pd.Series:
     return values
 
 
-def prepare_inputs(df: pd.DataFrame) -> pd.DataFrame:
-    gas_col = first_existing_column(df, ["c_G", "gas_price", "gas_price_MWh"])
+def prepare_inputs(ratio_1d_df: pd.DataFrame, absolute_2d_df: pd.DataFrame) -> pd.DataFrame:
+    gas_col = first_existing_column(absolute_2d_df, ["c_G", "gas_price", "gas_price_MWh"])
     electricity_col = first_existing_column(
-        df,
+        absolute_2d_df,
         ["c_el", "c_e", "actual_c_electricity", "electricity_price", "electricity_price_MWh"],
     )
 
-    prepared = pd.DataFrame(index=df.index)
-    prepared["c_G_raw"] = df[gas_col]
-    prepared["c_el_raw"] = df[electricity_col]
-    prepared["c_G"] = to_eur_per_kwh(df[gas_col], gas_col)
-    prepared["c_el"] = to_eur_per_kwh(df[electricity_col], electricity_col)
-    prepared["ratio"] = prepared["c_G"] / prepared["c_el"]
+    prepared = pd.DataFrame(index=absolute_2d_df.index)
+    prepared["c_G_raw"] = absolute_2d_df[gas_col]
+    prepared["c_el_raw"] = absolute_2d_df[electricity_col]
+    prepared["c_G"] = to_eur_per_kwh(absolute_2d_df[gas_col], gas_col)
+    prepared["c_el"] = to_eur_per_kwh(absolute_2d_df[electricity_col], electricity_col)
+    prepared["ratio"] = ratio_1d_df["ratio"] if "ratio" in ratio_1d_df.columns else prepared["c_G"] / prepared["c_el"]
 
-    if TARGET_COLUMN not in df.columns:
-        raise ValueError(f"Missing target column '{TARGET_COLUMN}' in the test data.")
-    prepared["opex_true"] = df[TARGET_COLUMN]
+    if TARGET_COLUMN not in absolute_2d_df.columns:
+        raise ValueError(f"Missing target column '{TARGET_COLUMN}' in {ABSOLUTE_2D_TEST_CSV}.")
+    prepared["opex_true"] = absolute_2d_df[TARGET_COLUMN]
     return prepared
 
 
 def predict_absolute_opex(prepared: pd.DataFrame) -> pd.DataFrame:
-    absolute_model = load_model_or_mock(ABSOLUTE_3D_MODEL_PATH, ("c_G", "c_el"))
-    ratio_model = load_model_or_mock(RATIO_MODEL_PATH, ("ratio",))
+    absolute_model = load_model(ABSOLUTE_3D_MODEL_PATH)
+    ratio_model = load_model(RATIO_MODEL_PATH)
 
     absolute_input = pd.DataFrame({"c_G": prepared["c_G"], "c_el": prepared["c_el"]})
     ratio_input = pd.DataFrame({"ratio": prepared["ratio"]})
@@ -168,8 +158,8 @@ def plot_error_comparison(result: pd.DataFrame) -> Path:
     color_max = max(result["error_3d"].max(), result["error_2d"].max())
 
     plot_specs = [
-        (axes[0], "3D absolute regression", "error_3d", "tab:blue"),
-        (axes[1], "2D ratio regression converted to absolute OPEX", "error_2d", "tab:red"),
+        (axes[0], "2D Absolute Regression", "error_3d", "tab:blue"),
+        (axes[1], "1D Ratio Regression", "error_2d", "tab:red"),
     ]
 
     x = result["c_el_raw"]
@@ -224,8 +214,7 @@ def plot_error_comparison(result: pd.DataFrame) -> Path:
     )
 
     fig.suptitle(
-        "Absolute OPEX error over the gas/electricity price plane\n"
-        "Red background shows the implicit ratio-model penalty 1 / C_el^2",
+        "Absolute OPEX error over the gas/electricity price plane\n",
         fontsize=13,
     )
     fig.tight_layout(rect=(0, 0.08, 1, 0.92))
@@ -235,8 +224,8 @@ def plot_error_comparison(result: pd.DataFrame) -> Path:
 
 
 def main() -> None:
-    test_df = load_test_data()
-    prepared = prepare_inputs(test_df)
+    ratio_1d_df, absolute_2d_df = load_test_data()
+    prepared = prepare_inputs(ratio_1d_df, absolute_2d_df)
     result = predict_absolute_opex(prepared)
     output_path = plot_error_comparison(result)
 
