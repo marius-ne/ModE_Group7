@@ -6,12 +6,13 @@ if __name__ == "__main__":
     # ============================================================
     # Global parameter
     # ============================================================
-    N_SAMPLES_TRAIN = 5
-    N_SAMPLES_TEST = 0
-    N_CORNER = 4
+    N_SAMPLES_TRAIN = 40
+    N_SAMPLES_TEST = 10
+    N_CORNER = 0
     N_EDGES = 0
+    SELECTED_METHODS = ["lhs"]  # e.g. ["lhs"], ["random"] or ["sobol", "lhs"]
 
-    SAMPLE_TYPE = "training" # "training" or "test"
+    SAMPLE_TYPE = "test" # "training" or "test"
     TYPE_CONFIG = {
         "training": N_SAMPLES_TRAIN,
         "test": N_SAMPLES_TEST
@@ -53,7 +54,10 @@ if __name__ == "__main__":
     # ============================================================
     # Create and save samples
     # ============================================================
-    for method in SAMPLING_CONFIG:
+    for method in SELECTED_METHODS:
+        if method not in SAMPLING_CONFIG:
+            raise ValueError(f"Unknown sampling method '{method}'. Choose from {list(SAMPLING_CONFIG)}.")
+
         cfg = SAMPLING_CONFIG[method]
         print(f"\n--- {method.upper()} Sampling ---")
 

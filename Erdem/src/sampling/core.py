@@ -169,8 +169,8 @@ def save_samples(
         else:
             # Save samples as parquet for Sobol, LHS and random (2D)
             suffix = f"_{file_name}" if file_name else ""
-            sample_file = base_dir / f"{sampling_method}{suffix}_samples.parquet"
-            samples.to_parquet(sample_file)
+            sample_file = base_dir / f"{sampling_method}{suffix}_samples.csv"
+            samples.to_csv(sample_file, index=False, header=True, float_format="%.18g")
             print(f"Saved {sampling_method} {file_name} samples to {sample_file}")
 
             # Save quality file as json
@@ -210,8 +210,14 @@ def load_samples(
 
     else:
         suffix = f"_{file_name}" if file_name else ""
-        sample_file = base_dir / f"{sampling_method}{suffix}_samples.parquet"
-        samples = pd.read_parquet(sample_file)
+        sample_file = base_dir / f"{sampling_method}{suffix}_samples.csv"
+        samples = pd.read_csv
+        
+        
+         
+        ( 
+            
+            -sample_file)
 
         # Quality metrics
         quality_file = base_dir / f"{sampling_method}{suffix}_quality.json"

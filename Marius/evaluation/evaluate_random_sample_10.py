@@ -17,23 +17,26 @@ from formulation_LP_upper import solve as solve_lp_upper
 from formulation_LP_approximated import solve as solve_lp_approximated
 
 
-RATIOS_CSV = ROOT / "Erdem" / "results" / "Sampling" / "test" / "log_10_samples.csv"
-OUTPUT_CSV = ROOT / "Marius" / "results" / "opex_random_sample_10.csv"
+RATIOS_CSV = ROOT / "Erdem" / "results" / "Sampling" / "training" / "lhs_40_samples.csv"
+OUTPUT_CSV = ROOT / "Marius" / "results" / "opex_LHS_2D_sample_40_2.csv"
 
 
 def main():
-    ratios = pd.read_csv(RATIOS_CSV)["ratios"].values
-    c_el = 1.0
+    samples = pd.read_csv(RATIOS_CSV)
 
     rows = []
-    for i, ratio in enumerate(ratios):
-        c_G = float(ratio) * c_el
-        print(f"[{i + 1}/{len(ratios)}] ratio={ratio:.6f}")
+    for i, sample in samples.iterrows():
+        c_G = float(sample["gas_price"])/1000 # €/Kwh
+        c_electricity = float(sample["electricity_price"])/1000 # €/Kwh
+        ratio = c_G / c_electricity if c_electricity != 0 else 0
+        c_el = 1 
+        
+        print(f"[{i + 1}/{len(samples)}] ratio={ratio:.6f} c_G={c_G:.6f}  c_el={c_el:.6f}")
 
-        opex_milp, _ = solve_milp(c_G, c_el, mip_gap=1e-2)
-        opex_lower, _ = solve_lp_lower(c_G, c_el)
-        opex_upper, _ = solve_lp_upper(c_G, c_el)
-        opex_approx, _ = solve_lp_approximated(c_G, c_el, mode="mean_efficiency")
+        opex_milp, _ = solve_milp(ratio, c_el, mip_gap=1e-3)
+        opex_lower, _ = solve_lp_lower(ratio, c_el)
+        opex_upper, _ = solve_lp_upper(ratio, c_el)
+        opex_approx, _ = solve_lp_approximated(ratio, c_el, mode="mean_efficiency")
 
         rows.append({
             "ratio": ratio,
@@ -43,6 +46,7 @@ def main():
             "opex_lp_lower": opex_lower,
             "opex_lp_upper": opex_upper,
             "opex_lp_approximated": opex_approx,
+            "actual_c_electricity": c_electricity,
         })
 
         print(

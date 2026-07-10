@@ -112,6 +112,9 @@ def run(train_csv: Path = TRAIN_CSV, test_csv: Path = TEST_CSV,
     # --- 1. Load training data -------------------------------------------------
     df_train = pd.read_csv(train_csv)
     feature_cols = feature_cols_of(df_train)
+    if feature_cols != ["ratio"] and fit_intercept:
+        print("2D price-pair training detected: forcing fit_intercept=False.")
+        fit_intercept = False
     opex_label = opex_label_of(feature_cols)
     print(f"Loaded {len(df_train)} training points from {train_csv} "
           f"(features: {feature_cols}, target: {opex_label}, fit_intercept={fit_intercept})")

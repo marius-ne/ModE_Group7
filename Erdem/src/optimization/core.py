@@ -1012,7 +1012,7 @@ def solve_milp(
     m = build_milp(Q_D_s, P_D_s, c_g, c_el, normalize=normalize,
                    strict_demand_satisfaction=strict_demand_satisfaction)
 
-    solve_model(m, MIPGap=mip_gap, TimeLimit=300, tee=tee)
+    solve_model(m, MIPGap=mip_gap, TimeLimit=900, tee=tee)
 
     raw_obj = pyo.value(m.OBJ)
     if normalize:
