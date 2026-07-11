@@ -59,8 +59,8 @@ def apply_style(
     nrows: int = 1,
     ncols: int = 1,
     science: bool = True,
-    grid: bool = True,
-    latex: bool = True,
+    grid: bool = False,
+    latex: bool = False,
 ) -> None:
     """
     Applies a consistent style to Matplotlib plots.
@@ -77,6 +77,9 @@ def apply_style(
 
     # --- SciencePlots ---------------------
     if science:
+
+        import scienceplots
+
         styles = ["science"]
         if grid:
             styles.append("grid")

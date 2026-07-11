@@ -503,19 +503,19 @@ def load_optimization_results(
         file_stem = candidates[0].stem
 
     # Define file paths
-    parquet_path = base_dir / f"{file_stem}.parquet"
+    csv_path = base_dir / f"{file_stem}.csv"
     json_path = base_dir / f"{file_stem}.json"
 
     # Validate that files exist
-    if not parquet_path.exists():
-        raise FileNotFoundError(f"Solution file not found: {parquet_path}")
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Solution file not found: {csv_path}")
     if not json_path.exists():
         raise FileNotFoundError(f"Metadata file not found: {json_path}")
 
     try:
         # Load solution time series
-        solution_df = pd.read_parquet(parquet_path)
-        print(f"Optimization results loaded from:\n{parquet_path}")
+        solution_df = pd.read_csv(csv_path)
+        print(f"Optimization results loaded from:\n{csv_path}")
 
         # Load metadata
         with open(json_path, "r") as f:
@@ -523,8 +523,8 @@ def load_optimization_results(
         print(f"Metadata loaded from:\n{json_path}")
 
 
-    except pd.errors.ParquetError as e:
-        raise ValueError(f"Failed to parse parquet file {parquet_path}: {e}")
+    except pd.errors.EmptyDataError as e:
+        raise ValueError(f"Failed to parse CSV file {csv_path}: {e}")
 
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse JSON file {json_path}: {e}")
