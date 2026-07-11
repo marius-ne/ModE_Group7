@@ -211,15 +211,9 @@ def load_samples(
     else:
         suffix = f"_{file_name}" if file_name else ""
         sample_file = base_dir / f"{sampling_method}{suffix}_samples.csv"
-        samples = pd.read_csv
-        
-        
-         
-        ( 
-            
-            -sample_file)
+        samples = pd.read_csv(sample_file)
 
-        # Only load quality metrics for sobol/lhs
+        # Quality metrics
         quality_file = base_dir / f"{sampling_method}{suffix}_quality.json"
         with open(quality_file, "r") as f:
             dict_quality = json.load(f)
