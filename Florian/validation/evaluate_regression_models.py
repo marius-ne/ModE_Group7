@@ -41,6 +41,17 @@ ARCHIVE_DIR = Path(__file__).resolve().parents[1] / "validation" / "archive"
 TEST_DATA_2D = Path(__file__).resolve().parents[2] / "Marius" / "results" / "evaluation_lhs_10_test_2D.csv"
 OUTPUT_DIR_2D = Path(__file__).resolve().parents[1] / "validation" / "results_2d_models"
 
+# Training dataset directories and output directories for training-set evaluation
+TRAINING_OUTPUT_DIR_1D = Path(__file__).resolve().parents[1] / "validation" / "training_results_1d_models"
+TRAINING_OUTPUT_DIR_2D = Path(__file__).resolve().parents[1] / "validation" / "training_results_2d_models"
+TRAINING_SAMPLE_PATHS_1D = {
+    2: Path(__file__).resolve().parents[2] / "Marius" / "results" / "evaluation_2_training_samples_1D.csv",
+    5: Path(__file__).resolve().parents[2] / "Marius" / "results" / "evaluation_5_training_samples_1D.csv",
+    20: Path(__file__).resolve().parents[2] / "Marius" / "results" / "evaluation_20_training_samples_1D.csv",
+    40: Path(__file__).resolve().parents[2] / "Marius" / "results" / "evaluation_training_samples_1D_angle.csv",
+}
+TRAINING_SAMPLE_PATH_2D = Path(__file__).resolve().parents[2] / "Marius" / "results" / "evaluation_training_samples_2D.csv"
+
 # Training sample sizes for 1D models
 TRAINING_SIZES_1D = [2, 5, 20, 40]
 
@@ -79,6 +90,30 @@ def load_1d_test_data() -> pd.DataFrame:
     """Load 1D test data with ratio feature."""
     df = pd.read_csv(TEST_DATA_1D)
     return df
+
+
+def load_1d_training_data(training_size: int) -> pd.DataFrame:
+    """Load the 1D training sample used for the given training size."""
+    if training_size not in TRAINING_SAMPLE_PATHS_1D:
+        raise ValueError(f"Unknown 1D training size: {training_size}")
+    training_path = TRAINING_SAMPLE_PATHS_1D[training_size]
+    if not training_path.exists():
+        raise FileNotFoundError(f"1D training sample not found: {training_path}")
+    return pd.read_csv(training_path)
+
+
+def predict_1d_single_model_on_training_data(
+    model_path: Path,
+    train_df: pd.DataFrame,
+    target: str,
+) -> PredictionResult:
+    """Make predictions on the 1D model's own training sample."""
+    model = joblib.load(model_path)
+    X = train_df[["ratio"]].values
+    y_test = train_df[target].values
+    y_pred = model.predict(X)
+    r2 = r2_score(y_test, y_pred)
+    return PredictionResult(y_test=y_test, y_pred=y_pred, r2=r2)
 
 
 def infer_price_multiplier_1d(target: str) -> float:
@@ -220,6 +255,212 @@ def evaluate_1d_models():
     summary_path = OUTPUT_DIR_1D / "r2_scores_summary.csv"
     summary_df.to_csv(summary_path)
     print(f"\n[OK] 1D R² summary saved to: {summary_path.name}")
+
+
+def evaluate_1d_models_on_training_samples():
+    """Evaluate all 1D models on their own training samples."""
+    TRAINING_OUTPUT_DIR_1D.mkdir(parents=True, exist_ok=True)
+    r2_summary_data = {size: {} for size in TRAINING_SIZES_1D}
+
+    print(f"\n{'='*70}")
+    print("EVALUATING 1D MODELS ON TRAINING SAMPLES")
+    print(f"{'='*70}")
+
+    for training_size in TRAINING_SIZES_1D:
+        train_df = load_1d_training_data(training_size)
+        print(f"\n--- Training size: {training_size} (training sample shape: {train_df.shape}) ---")
+
+        for target in OPEX_TARGETS:
+            full_target_name = TARGET_TO_FULL_NAME[target]
+            model_pattern = f"{training_size}_ratio_opex_{target}.joblib"
+            model_path = MODEL_DIR_1D / model_pattern
+            if not model_path.exists():
+                print(f"  WARNING: Model not found: {model_path.name}")
+                continue
+
+            result = predict_1d_single_model_on_training_data(model_path, train_df, full_target_name)
+            print(f"  {full_target_name:20} R² = {result.r2:.6f}")
+
+            output_csv = TRAINING_OUTPUT_DIR_1D / f"{training_size}_train_ratio_opex_{target}.csv"
+            pred_df = pd.DataFrame({
+                "y_test": result.y_test,
+                "y_pred": result.y_pred,
+                "r2": result.r2,
+            })
+            pred_df.to_csv(output_csv, index=False)
+            r2_summary_data[training_size][full_target_name] = result.r2
+
+    summary_df = pd.DataFrame(r2_summary_data).T
+    summary_df = summary_df[[f"opex_{t}" for t in OPEX_TARGETS]]
+    summary_df.index.name = "training_size"
+    summary_df.columns = [MODEL_LABELS[col] for col in summary_df.columns]
+    summary_df = summary_df[MODEL_ORDER]
+
+    summary_path = TRAINING_OUTPUT_DIR_1D / "r2_scores_summary.csv"
+    summary_df.to_csv(summary_path)
+    print(f"\n[OK] 1D training-sample R² summary saved to: {summary_path.name}")
+
+
+def load_2d_training_data() -> pd.DataFrame:
+    """Load the 2D training sample used for the 2D model."""
+    if not TRAINING_SAMPLE_PATH_2D.exists():
+        raise FileNotFoundError(f"2D training sample not found: {TRAINING_SAMPLE_PATH_2D}")
+    return pd.read_csv(TRAINING_SAMPLE_PATH_2D)
+
+
+def predict_2d_single_model_on_training_data(
+    model_path: Path,
+    train_df: pd.DataFrame,
+    target: str,
+) -> PredictionResult:
+    """Make predictions on the 2D model's own training sample."""
+    model = joblib.load(model_path)
+    X = train_df[["gas_price_MWh", "electricity_price_MWh"]].values
+    y_test = train_df[target].values
+    y_pred = model.predict(X)
+    r2 = r2_score(y_test, y_pred)
+    return PredictionResult(y_test=y_test, y_pred=y_pred, r2=r2)
+
+
+def evaluate_2d_models_on_training_samples():
+    """Evaluate the 2D discrete-price models on the 2D training sample."""
+    TRAINING_OUTPUT_DIR_2D.mkdir(parents=True, exist_ok=True)
+    train_df = load_2d_training_data()
+
+    print(f"\n{'='*70}")
+    print("EVALUATING 2D MODELS ON TRAINING SAMPLES")
+    print(f"{'='*70}")
+    print(f"Training data shape: {train_df.shape}")
+    print(f"Gas price range: [{train_df['gas_price_MWh'].min():.2f}, {train_df['gas_price_MWh'].max():.2f}]")
+    print(f"Electricity price range: [{train_df['electricity_price_MWh'].min():.2f}, {train_df['electricity_price_MWh'].max():.2f}]")
+
+    r2_summary_data: dict[str, float] = {}
+
+    for target in OPEX_TARGETS:
+        full_target_name = TARGET_TO_FULL_NAME[target]
+        model_path = find_2d_model_path(target)
+        if model_path is None:
+            print(f"  WARNING: No 2D model found for {target}")
+            continue
+
+        result = predict_2d_single_model_on_training_data(model_path, train_df, full_target_name)
+        print(f"  {full_target_name:20} R² = {result.r2:.6f}")
+
+        output_csv = TRAINING_OUTPUT_DIR_2D / f"40_train_2d_discrete_opex_{target}.csv"
+        pred_df = pd.DataFrame({
+            "y_test": result.y_test,
+            "y_pred": result.y_pred,
+            "r2": result.r2,
+        })
+        pred_df.to_csv(output_csv, index=False)
+        r2_summary_data[full_target_name] = result.r2
+
+    summary_df = pd.DataFrame([r2_summary_data])
+    summary_df = summary_df[[f"opex_{t}" for t in OPEX_TARGETS]]
+    summary_df.columns = [MODEL_LABELS[col] for col in summary_df.columns]
+    summary_df = summary_df[MODEL_ORDER]
+
+    summary_path = TRAINING_OUTPUT_DIR_2D / "r2_scores_summary.csv"
+    summary_df.to_csv(summary_path, index=False)
+    print(f"\n[OK] 2D training-sample R² summary saved to: {summary_path.name}")
+
+
+def evaluate_1d_models_vs_milp_on_training_samples():
+    """Compute R² for every 1D model prediction against actual MILP OPEX on training data."""
+    TRAINING_OUTPUT_DIR_1D.mkdir(parents=True, exist_ok=True)
+    rows = []
+
+    print(f"\n{'='*70}")
+    print("EVALUATING 1D MODELS VS MILP ON TRAINING SAMPLES")
+    print(f"{'='*70}")
+
+    for training_size in TRAINING_SIZES_1D:
+        train_df = load_1d_training_data(training_size)
+        y_actual = train_df["opex_milp"].values
+        print(f"\n--- Training size: {training_size} (shape {train_df.shape}) ---")
+
+        for target in OPEX_TARGETS:
+            full_target_name = TARGET_TO_FULL_NAME[target]
+            model_path = MODEL_DIR_1D / f"{training_size}_ratio_opex_{target}.joblib"
+            if not model_path.exists():
+                print(f"  WARNING: Model not found: {model_path.name}")
+                continue
+
+            model = joblib.load(model_path)
+            y_pred = model.predict(train_df[["ratio"]].values)
+            r2 = r2_score(y_actual, y_pred)
+            print(f"  {full_target_name:20} vs MILP R² = {r2:.6f}")
+
+            output_csv = TRAINING_OUTPUT_DIR_1D / f"{training_size}_train_ratio_opex_{target}_vs_milp.csv"
+            pd.DataFrame({
+                "y_test_milp": y_actual,
+                "y_pred_model": y_pred,
+                "r2": r2,
+            }).to_csv(output_csv, index=False)
+
+            rows.append({
+                "training_size": training_size,
+                "model": MODEL_LABELS[full_target_name],
+                "r2_vs_milp": r2,
+            })
+
+    summary_df = pd.DataFrame(rows)
+    if not summary_df.empty:
+        summary_df = summary_df.pivot(index="training_size", columns="model", values="r2_vs_milp")
+        summary_df = summary_df[MODEL_ORDER]
+        summary_path = TRAINING_OUTPUT_DIR_1D / "r2_vs_milp_summary.csv"
+        summary_df.to_csv(summary_path)
+        print(f"\n[OK] 1D models vs MILP R² summary saved to: {summary_path.name}")
+    else:
+        print("\nWARNING: No 1D models vs MILP R² results were generated.")
+
+
+def evaluate_2d_models_vs_milp_on_training_samples():
+    """Compute R² for every 2D model prediction against actual MILP OPEX on 2D training data."""
+    TRAINING_OUTPUT_DIR_2D.mkdir(parents=True, exist_ok=True)
+    train_df = load_2d_training_data()
+    y_actual = train_df["opex_milp"].values
+
+    print(f"\n{'='*70}")
+    print("EVALUATING 2D MODELS VS MILP ON TRAINING SAMPLES")
+    print(f"{'='*70}")
+    print(f"Training data shape: {train_df.shape}")
+
+    rows = []
+
+    for target in OPEX_TARGETS:
+        full_target_name = TARGET_TO_FULL_NAME[target]
+        model_path = find_2d_model_path(target)
+        if model_path is None:
+            print(f"  WARNING: No 2D model found for {target}")
+            continue
+
+        model = joblib.load(model_path)
+        y_pred = model.predict(train_df[["gas_price_MWh", "electricity_price_MWh"]].values)
+        r2 = r2_score(y_actual, y_pred)
+        print(f"  {full_target_name:20} vs MILP R² = {r2:.6f}")
+
+        output_csv = TRAINING_OUTPUT_DIR_2D / f"40_train_2d_discrete_opex_{target}_vs_milp.csv"
+        pd.DataFrame({
+            "y_test_milp": y_actual,
+            "y_pred_model": y_pred,
+            "r2": r2,
+        }).to_csv(output_csv, index=False)
+
+        rows.append({
+            "model": MODEL_LABELS[full_target_name],
+            "r2_vs_milp": r2,
+        })
+
+    summary_df = pd.DataFrame(rows)
+    if not summary_df.empty:
+        summary_df = summary_df.set_index("model")["r2_vs_milp"].to_frame().T
+        summary_df = summary_df[MODEL_ORDER]
+        summary_path = TRAINING_OUTPUT_DIR_2D / "r2_vs_milp_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+        print(f"\n[OK] 2D models vs MILP R² summary saved to: {summary_path.name}")
+    else:
+        print("\nWARNING: No 2D models vs MILP R² results were generated.")
 
 
 # ============================================================
@@ -410,7 +651,7 @@ def main():
     if not TEST_DATA_2D.exists():
         raise FileNotFoundError(f"2D test data not found: {TEST_DATA_2D}")
     
-    # Evaluate both model types
+    # Evaluate both model types on test data
     try:
         evaluate_1d_models()
     except Exception as e:
@@ -422,6 +663,36 @@ def main():
         evaluate_2d_models()
     except Exception as e:
         print(f"ERROR in 2D evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Evaluate both model types on their own training samples
+    try:
+        evaluate_1d_models_on_training_samples()
+    except Exception as e:
+        print(f"ERROR in 1D training-sample evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+    try:
+        evaluate_2d_models_on_training_samples()
+    except Exception as e:
+        print(f"ERROR in 2D training-sample evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Evaluate model predictions against actual MILP OPEX on training data
+    try:
+        evaluate_1d_models_vs_milp_on_training_samples()
+    except Exception as e:
+        print(f"ERROR in 1D models vs MILP training evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+    try:
+        evaluate_2d_models_vs_milp_on_training_samples()
+    except Exception as e:
+        print(f"ERROR in 2D models vs MILP training evaluation: {e}")
         import traceback
         traceback.print_exc()
     

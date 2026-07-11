@@ -11,7 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[3]
 
 # Existing project artefacts. Replace these paths if you want to compare other models.
 RATIO_1D_TEST_CSV = ROOT / "Marius" / "results" / "evaluation_lhs_10_test_1D.csv"

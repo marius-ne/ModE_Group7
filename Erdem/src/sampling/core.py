@@ -297,7 +297,7 @@ def create_sample(
         n_interior = max(0, n_total - n_corner)
 
         # LH sampling for interior
-        sampler = qmc.LatinHypercube(d=2, scramble=True, optimization="random-cd", seed=28) # generate n_interior LHS points in [0,1]^2
+        sampler = qmc.LatinHypercube(d=2, scramble=True, optimization="random-cd", seed=69) # generate n_interior LHS points in [0,1]^2
         raw_samples = sampler.random(n_interior) if n_interior > 0 else np.empty((0,2))
         sample_interior = scale_to_price_domain(raw_samples) if n_interior > 0 else np.empty((0,2))
 

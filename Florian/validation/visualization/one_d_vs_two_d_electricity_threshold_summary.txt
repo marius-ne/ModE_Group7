@@ -1,9 +1,9 @@
 1D vs 2D electricity-price threshold analysis
 
-Best split threshold: C_el >= 144.88 EUR/MWh -> use 2D
+Best split threshold: C_el >= 147.30 EUR/MWh -> use 2D
 Correct decisions with this simple rule: 10 / 10 (100%)
 Strict observed dominance threshold: C_el >= 149.00 EUR/MWh
-Linear trend crossing: C_el ~= 123.25 EUR/MWh
+Best split threshold is the piecewise-linear crossing of the absolute-error curves.
 
 Price-region averages:
 price_region  electricity_min_MWh  electricity_max_MWh  mean_error_2d  mean_error_1d  mean_advantage_2d      better_on_average

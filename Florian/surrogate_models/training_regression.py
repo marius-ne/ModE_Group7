@@ -11,13 +11,13 @@ from sklearn.metrics import mean_squared_error, r2_score
 # "prices_2d" -> two features, concrete gas and electricity prices: c_G and c_el
 TRAINING_MODE = "prices_2d"  # "ratio" or "prices_2d"
 
-RATIO_TRAINING_FILE = "Marius/results/evaluation_5_training_samples_1D.csv"
+RATIO_TRAINING_FILE = "Marius/results/evaluation_training_samples_1D_angle.csv"
 RATIO_TEST_FILE = "Marius/results/evaluation_lhs_10_test_1D.csv"
 
-PRICE_2D_TRAINING_FILE = "Marius/results/evaluation_training_samples_2D.csv"
-PRICE_2D_TEST_FILE = "Marius/results/evaluation_lhs_10_test_2D.csv"
+PRICE_2D_TRAINING_FILE = "Marius/results/2D_evaluation_5_training_samples_2D.csv"
+PRICE_2D_TEST_FILE = "Marius/results/2D_evaluation_10_test_2D.csv"
 
-REGRESSION_RESULTS_DIR = "Florian/validation"
+REGRESSION_RESULTS_DIR = "Florian/validation/results_2d_models"
 COMPARISON_2D_DIR = f"{REGRESSION_RESULTS_DIR}"
 JOBLIB_DIR = "Florian/validation/joblibs"
 
