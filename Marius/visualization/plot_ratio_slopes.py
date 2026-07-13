@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.append("Erdem")
 from src.sampling.core import GAS_MIN, GAS_MAX, ELEC_MIN, ELEC_MAX, create_sample
+from src.visualization.style import apply_style, get_figsize
 
 _BOUND_COLOR = "#888780"
 
@@ -17,8 +18,11 @@ N_RATIOS = 40
 PAD_FRAC = 0.6  # fraction of rectangle width/height shown as surrounding margin
 SAMPLING_METHOD = "angle"  # "log" -> equally spaced in log(ratio), "angle" -> equally spaced in arctan(ratio)
 
+FIG_WIDTH_CM = 16
+CBAR_WIDTH_IN = 1.6  # width the colorbar takes out of the figure, so the axes keep the data aspect
 
-def plot_ratio_slopes(output_dir: str | None = None, fontsize: int = 11,
+
+def plot_ratio_slopes(output_dir: str | None = None,
                        sampling_method: str = SAMPLING_METHOD) -> Path:
     base = Path(output_dir) if output_dir else Path("Marius/visualization")
     base.mkdir(parents=True, exist_ok=True)
@@ -31,11 +35,13 @@ def plot_ratio_slopes(output_dir: str | None = None, fontsize: int = 11,
     xlim = (max(0.0, ELEC_MIN - pad_x), ELEC_MAX + pad_x)
     ylim = (max(0.0, GAS_MIN - pad_y), GAS_MAX + pad_y)
 
-    # size the figure to match the data's true aspect ratio, so the equal-aspect
-    # axes below don't leave the box shrunk with excess whitespace
-    fig_height = 7.0
-    fig_width = fig_height * (xlim[1] - xlim[0]) / (ylim[1] - ylim[0]) + 1.6  # + room for the colorbar
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    # the figure width comes from the style; its height is then whatever makes the axes match
+    # the data's true aspect ratio, so the equal-aspect axes below don't leave the box shrunk
+    # with excess whitespace
+    apply_style(width_cm=FIG_WIDTH_CM, grid=True, strict=True)
+    fig_width, _ = get_figsize(width_cm=FIG_WIDTH_CM)
+    fig_height = (fig_width - CBAR_WIDTH_IN) * (ylim[1] - ylim[0]) / (xlim[1] - xlim[0])
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height), constrained_layout=True)
 
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
@@ -77,8 +83,7 @@ def plot_ratio_slopes(output_dir: str | None = None, fontsize: int = 11,
     tick_ratios = tick_ratios[(tick_ratios >= ratios.min()) & (tick_ratios <= ratios.max())]
     cbar.set_ticks(np.log10(tick_ratios))
     cbar.set_ticklabels([f"{r:.3g}" for r in tick_ratios])
-    cbar.set_label(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ [-]", fontsize=fontsize)
-    cbar.ax.tick_params(labelsize=fontsize - 1)
+    cbar.set_label(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ [-]")
 
     # origin marker, drawn on top so it stays legible
     ax.scatter([0], [0], color=_BOUND_COLOR, s=35, zorder=5, edgecolors="black", linewidths=0.6)
@@ -99,19 +104,14 @@ def plot_ratio_slopes(output_dir: str | None = None, fontsize: int = 11,
             lbl.set_color(_BOUND_COLOR)
             lbl.set_fontweight("bold")
 
-    ax.set_xlabel(r"Electricity price $c_{\mathrm{el}}$ [€/MWh]", fontsize=fontsize)
-    ax.set_ylabel(r"Gas price $c_G$ [€/MWh]", fontsize=fontsize)
+    ax.set_xlabel(r"Electricity price $c_{\mathrm{el}}$ [€/MWh]")
+    ax.set_ylabel(r"Gas price $c_G$ [€/MWh]")
     ax.set_title(
-        f"Feasible price rectangle with {N_RATIOS} {sampling_method}-sampled ratios as slopes",
-        fontsize=fontsize, fontweight="bold",
+        f"Feasible price rectangle with {N_RATIOS} {sampling_method}-sampled ratios as slopes"
     )
-    ax.tick_params(labelsize=fontsize - 1)
-    ax.grid(True, linewidth=0.4, alpha=0.5)
-
-    fig.tight_layout()
 
     out_path = base / f"ratio_slopes_{sampling_method}.png"
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path)  # dpi/bbox come from apply_style's rcParams
     plt.close(fig)
     return out_path
 

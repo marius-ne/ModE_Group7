@@ -7,6 +7,7 @@ each point.
 
 import sys
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 
@@ -20,7 +21,18 @@ STRICT_DEMAND_SATISFACTION = True
 LP_APPROX_MODE = "mean_efficiency"
 C_EL_REF = 1.0  # reference electricity price [€/kWh] used to derive c_gas = ratio * C_EL_REF in 1D mode
 
+# Seed for the test sample's LHS/Sobol sampler. Deliberately different from create_sample's
+# default (28), which the 2D *training* sample uses -- otherwise test and training points
+# come out of the same quasi-random sequence and are not an independent draw.
+TEST_SEED = 4711
+
 OPEX_COLUMNS = ["opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"]
+
+# Wall-clock seconds each formulation took on each sample point, recorded by solve_all
+# alongside the OPEX it produced. The solves happen anyway, so timing them here is free and
+# means no downstream script (e.g. Marius/visualization/plot_pareto_accuracy_vs_time.py)
+# ever has to re-solve just to find out how long a formulation takes.
+TIME_COLUMNS = ["time_milp", "time_lp_lower", "time_lp_upper", "time_lp_approx"]
 
 _demand_df = pd.read_csv(ROOT / "energy_demands.csv")
 Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
@@ -81,15 +93,17 @@ def generate_shared_test_points(
         method_2d: str = "lhs",
         n_corner: int = 0,
         n_edges: int = 0,
+        seed: int = TEST_SEED,
 ) -> pd.DataFrame:
     """Generate n (gas_price_MWh, electricity_price_MWh) pairs with the chosen
-    2D test sampling method.
+    2D test sampling method, seeded with TEST_SEED so the points are an independent
+    draw from the training sample's (which uses create_sample's default seed).
 
     This is the single test-point generator every sampling mode's test set is built
     from (see derive_1d_from_2d), so 1D, 2D and 2D_noY are all evaluated on the exact
     same underlying price scenarios.
     """
-    df, _ = create_sample(method_2d, n, n_corner=n_corner, n_edges=n_edges)
+    df, _ = create_sample(method_2d, n, n_corner=n_corner, n_edges=n_edges, seed=seed)
     points = df[["gas_price", "electricity_price"]].reset_index(drop=True)
     return points.rename(columns={"gas_price": "gas_price_MWh", "electricity_price": "electricity_price_MWh"})
 
@@ -105,17 +119,34 @@ def derive_1d_from_2d(df_2d: pd.DataFrame) -> pd.DataFrame:
     df_1d = pd.DataFrame({"ratio": df_2d["gas_price_MWh"] / df_2d["electricity_price_MWh"]})
     for col in OPEX_COLUMNS:
         df_1d[col] = df_2d[col] / c_el
+    # Solve times carry over verbatim: they are the runtime of the 2D solve these rows were
+    # derived from, in seconds, and seconds do not get divided by an electricity price.
+    for col in TIME_COLUMNS:
+        if col in df_2d.columns:
+            df_1d[col] = df_2d[col]
     return df_1d
 
 
+def _timed(solve, *args, **kwargs) -> tuple[float, float]:
+    """Run a solver and return (opex, wall-clock seconds it took)."""
+    start = perf_counter()
+    opex = solve(*args, **kwargs)[0]
+    return opex, perf_counter() - start
+
+
 def solve_all(points: pd.DataFrame) -> pd.DataFrame:
-    """Solve all 4 optimization problems for every sample point, return points + opex columns.
+    """Solve all 4 optimization problems for every sample point, return points + opex columns
+    + the wall-clock seconds each solve took (TIME_COLUMNS).
 
     In 2D mode, c_g/c_el are the real sampled prices, so the returned opex_* columns are
     absolute OPEX in €. In 1D mode, c_el is pinned to the arbitrary reference C_EL_REF
     (not a real price), so the returned opex_* columns are actually *specific* OPEX
     (OPEX per unit electricity price, i.e. OPEX / c_el, units €/(€/kWh)) — to get the
     absolute OPEX for a real c_el, multiply the returned value by that real c_el.
+
+    The time_* columns are plain wall-clock seconds and are NOT rescaled by c_el anywhere:
+    how long a solve takes is a property of the solver, not of the units its answer is
+    reported in.
     """
     is_2d = "gas_price_MWh" in points.columns
     opex_kind = "absolute OPEX [€]" if is_2d else "specific OPEX [€/(€/kWh)]"
@@ -129,26 +160,36 @@ def solve_all(points: pd.DataFrame) -> pd.DataFrame:
             c_g = row["ratio"] * c_el
 
         print(f"  [{i + 1}/{len(points)}] c_g={c_g:.5f} €/kWh  c_el={c_el:.5f} €/kWh  ({opex_kind})")
-        opex_milp = solve_milp(
-            Q_D, P_D, c_g, c_el, mip_gap=MIP_GAP, strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
-        )[0]
-        opex_lower = solve_lp_lower(
-            Q_D, P_D, c_g, c_el, strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
-        )[0]
-        opex_upper = solve_lp_upper(
-            Q_D, P_D, c_g, c_el, strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
-        )[0]
-        opex_approx = solve_lp_approximated(
-            Q_D, P_D, c_g, c_el, mode=LP_APPROX_MODE, strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
-        )[0]
+        opex_milp, t_milp = _timed(
+            solve_milp, Q_D, P_D, c_g, c_el,
+            mip_gap=MIP_GAP, strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
+        )
+        opex_lower, t_lower = _timed(
+            solve_lp_lower, Q_D, P_D, c_g, c_el,
+            strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
+        )
+        opex_upper, t_upper = _timed(
+            solve_lp_upper, Q_D, P_D, c_g, c_el,
+            strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
+        )
+        opex_approx, t_approx = _timed(
+            solve_lp_approximated, Q_D, P_D, c_g, c_el,
+            mode=LP_APPROX_MODE, strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
+        )
 
         rows.append({
             "opex_milp": opex_milp,
             "opex_lp_lower": opex_lower,
             "opex_lp_upper": opex_upper,
             "opex_lp_approx": opex_approx,
+            "time_milp": t_milp,
+            "time_lp_lower": t_lower,
+            "time_lp_upper": t_upper,
+            "time_lp_approx": t_approx,
         })
         print(f"    MILP={opex_milp:,.2f}  LP_lower={opex_lower:,.2f}  "
               f"LP_upper={opex_upper:,.2f}  LP_approx={opex_approx:,.2f}")
+        print(f"    times [s]: MILP={t_milp:.3f}  LP_lower={t_lower:.3f}  "
+              f"LP_upper={t_upper:.3f}  LP_approx={t_approx:.3f}")
 
     return pd.concat([points.reset_index(drop=True), pd.DataFrame(rows)], axis=1)

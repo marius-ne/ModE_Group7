@@ -1088,7 +1088,6 @@ def solve_lp_upper(
     -----
     mode='min' (default): run both 'boilers_on' and 'chp_on', return the cheaper.
     mode='boilers_on' | 'chp_on': run that single heuristic.
-    mode='rounded': solve LP lower, round deltas, fix and re-solve as LP.
     return_both=True: return ((opex_bo, df_bo), (opex_chp, df_chp)) regardless of mode.
     Returns (nan, empty DataFrame) when the solver cannot find a feasible solution.
 
@@ -1102,8 +1101,9 @@ def solve_lp_upper(
         B_max_Q   = Q_out_nom_B                           max boiler thermal output [kW]
         B_min_Q   = Q_out_nom_B · λ_out_min_B            min boiler thermal output [kW]
 
-    I.  2·CHP_max_Q ≥ Q_D  AND  2·CHP_min_Q ≤ Q_D  AND  2·CHP_max_P ≥ P_D  AND  2·CHP_min_P ≤ P_D
-        Both CHPs on: combined range covers both heat and power demand.
+    I.  2·CHP_max_Q ≥ Q_D  AND  2·CHP_min_Q ≤ Q_D  AND  2·CHP_min_P ≤ P_D
+        Both CHPs on: combined range covers heat demand without overproducing power.
+        No upper power guard is needed — P_grid ≥ 0 imports any power deficit.
         → CHP1=1, CHP2=1, B1=0, B2=0.
 
     II. (2·CHP_min_Q > Q_D  OR  2·CHP_min_P > P_D)  AND  CHP_min_Q ≤ Q_D  AND  CHP_min_P ≤ P_D  AND  CHP_max_Q ≥ Q_D
@@ -1148,23 +1148,17 @@ def solve_lp_upper(
 
     Raises ValueError if no case applies.
     """
+    if mode not in ("min", "boilers_on", "chp_on"):
+        raise ValueError("mode must be 'min', 'boilers_on' or 'chp_on'")
+
     Q_D_arr = np.asarray(Q_D, dtype=float)
     P_D_arr = np.asarray(P_D, dtype=float)
     n = len(Q_D_arr)
 
     def _run_single(single_mode: str):
-        if single_mode == "rounded":
-            _, lp_sol = solve_lp_lower(Q_D_arr, P_D_arr, c_g, c_el,
-                                       strict_demand_satisfaction=strict_demand_satisfaction,
-                                       tee=tee)
-            dB_f   = {(i, k): round(lp_sol.iloc[k]["dB1" if i == 1 else "dB2"])   for i in [1, 2] for k in range(n)}
-            dCHP_f = {(i, k): round(lp_sol.iloc[k]["dCHP1" if i == 1 else "dCHP2"]) for i in [1, 2] for k in range(n)}
-            din_f  = {k: round(lp_sol.iloc[k]["din_TES"])  for k in range(n)}
-            dout_f = {k: round(lp_sol.iloc[k]["dout_TES"]) for k in range(n)}
-        elif single_mode == "chp_on":
+        if single_mode == "chp_on":
             CHP_max_Q = Q_out_nom_CHP
             CHP_min_Q = Q_out_nom_CHP * lambda_out_min_CHP_th
-            CHP_max_P = P_out_nom_CHP
             CHP_min_P = P_out_nom_CHP * lambda_out_min_CHP_el
             B_max_Q   = Q_out_nom_B
             B_min_Q   = Q_out_nom_B * lambda_out_min_B
@@ -1174,9 +1168,10 @@ def solve_lp_upper(
                 heat_d = Q_D_arr[k]
                 pow_d  = P_D_arr[k]
 
-                # Case I: combined CHP range covers both heat and power demand
+                # Case I: combined CHP range covers heat demand and does not overproduce power
+                # (a power deficit needs no guard: P_grid >= 0 imports it)
                 if (2*CHP_max_Q >= heat_d and 2*CHP_min_Q <= heat_d and
-                        2*CHP_max_P >= pow_d  and 2*CHP_min_P <= pow_d):
+                        2*CHP_min_P <= pow_d):
                     chp1, chp2, b1, b2 = 1, 1, 0, 0
 
                 # Case II: combined min exceeds demand, but single CHP is feasible → CHP1 only

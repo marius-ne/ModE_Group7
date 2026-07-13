@@ -2,13 +2,16 @@
 % Requires: algorithm, algpseudocode
 %
 % Notation
-%   \bar{Q}_\mathrm{CHP}   = Q_out_nom_CHP                          (max heat per CHP unit)
-%   \uQ_\mathrm{CHP}       = lambda_out_min_CHP_th * Q_out_nom_CHP  (min heat per CHP unit)
-%   \bar{P}_\mathrm{CHP}   = P_out_nom_CHP                          (max power per CHP unit)
-%   \uP_\mathrm{CHP}       = lambda_out_min_CHP_el * P_out_nom_CHP  (min power per CHP unit)
-%   \bar{Q}_B              = Q_out_nom_B                             (max heat per boiler)
-%   \uQ_B                  = lambda_out_min_B * Q_out_nom_B          (min heat per boiler)
+%   \bar{Q}_\mathrm{CHP}        = Q_out_nom_CHP                          (max heat per CHP unit)
+%   \underline{Q}_\mathrm{CHP}  = lambda_out_min_CHP_th * Q_out_nom_CHP  (min heat per CHP unit)
+%   \underline{P}_\mathrm{CHP}  = lambda_out_min_CHP_el * P_out_nom_CHP  (min power per CHP unit)
+%   \bar{Q}_B                   = Q_out_nom_B                            (max heat per boiler)
+%   \underline{Q}_B             = lambda_out_min_B * Q_out_nom_B         (min heat per boiler)
 %   1[.] = Iverson bracket
+%
+% Only the *lower* power bound is tested: the electricity balance is
+% sum_i P_out_CHP,i + P_grid = P_D with P_grid >= 0, so a power deficit is always
+% importable from the grid, while overproduction would be infeasible.
 
 \begin{algorithm}
 \caption{CHP-on unit-commitment heuristic (evaluated per timestep $k$)}
@@ -16,16 +19,15 @@
 \begin{algorithmic}[1]
 \Require $Q_D,\; P_D,\;
          \bar{Q}_\mathrm{CHP},\; \underline{Q}_\mathrm{CHP},\;
-         \bar{P}_\mathrm{CHP},\; \underline{P}_\mathrm{CHP},\;
+         \underline{P}_\mathrm{CHP},\;
          \bar{Q}_B,\; \underline{Q}_B$
 \Ensure $\delta_{\mathrm{CHP},1},\,\delta_{\mathrm{CHP},2},\,
          \delta_{B,1},\,\delta_{B,2} \in \{0,1\}$
 
 \If{$2\bar{Q}_\mathrm{CHP} \geq Q_D$
     \textbf{ and } $2\underline{Q}_\mathrm{CHP} \leq Q_D$
-    \textbf{ and } $2\bar{P}_\mathrm{CHP} \geq P_D$
     \textbf{ and } $2\underline{P}_\mathrm{CHP} \leq P_D$}
-    \Comment{Case I: combined CHP range covers heat and power demand}
+    \Comment{Case I: combined CHP range covers heat demand, no power overproduction}
     \State $(\delta_{\mathrm{CHP},1},\;\delta_{\mathrm{CHP},2},\;
             \delta_{B,1},\;\delta_{B,2}) \gets (1,\,1,\,0,\,0)$
 

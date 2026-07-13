@@ -226,7 +226,8 @@ def create_sample(
         sampling_method: str,
         n_total: int,
         n_corner: int = 4,
-        n_edges: int = 4
+        n_edges: int = 4,
+        seed: int = 28
 ) -> tuple[pd.DataFrame, dict] | pd.Series:
     """
     Create a sample set using the specified sampling method and return a DataFrame with the sampling points and a dictionary with quality metrics
@@ -234,6 +235,9 @@ def create_sample(
     :param n_total: Number of total sample points to create
     :param n_corner: Number of sample points on corners of the price domain
     :param n_edges: Number of sample points on edges of the price domain
+    :param seed: RNG seed for the "lhs"/"sobol" samplers. Pass a seed different from the
+        training sample's when drawing a test sample, so test points are an independent
+        draw rather than the same quasi-random sequence.
     :return: DataFrame with the sampling points and dictionary with quality metrics (discrepancy and minimum pairwise distance) of the sampling method
     or just a Series with the sampling points
     """
@@ -291,7 +295,7 @@ def create_sample(
         n_interior = max(0, n_total - n_corner)
 
         # LH sampling for interior
-        sampler = qmc.LatinHypercube(d=2, scramble=True, optimization="random-cd", seed=28) # generate n_interior LHS points in [0,1]^2
+        sampler = qmc.LatinHypercube(d=2, scramble=True, optimization="random-cd", seed=seed) # generate n_interior LHS points in [0,1]^2
         raw_samples = sampler.random(n_interior) if n_interior > 0 else np.empty((0,2))
         sample_interior = scale_to_price_domain(raw_samples) if n_interior > 0 else np.empty((0,2))
 
@@ -322,7 +326,7 @@ def create_sample(
         # sample sobol interior (exact 2^m samples)
         if n_interior_sobol > 0:
             m = int(np.log2(n_interior_sobol))
-            sampler = qmc.Sobol(d=2, scramble=True, seed=28)
+            sampler = qmc.Sobol(d=2, scramble=True, seed=seed)
 
             try:
                 raw_sobol = sampler.random_base2(m)
