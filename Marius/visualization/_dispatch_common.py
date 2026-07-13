@@ -51,6 +51,13 @@ UNIT_NAMES = ["Boiler 1", "Boiler 2", "CHP 1", "CHP 2"]
 
 FIG_WIDTH_CM = 16
 
+# The energy balance figure spans the full page width and is a bit shorter per row than a
+# "golden" plot, so it reuses the wide, two-row convention already established elsewhere in
+# Marius (plot_price_grid_ratio.py uses this exact pair with nrows=2) rather than
+# FIG_WIDTH_CM/"golden".
+ENERGY_BALANCE_WIDTH_CM = 22
+ENERGY_BALANCE_ASPECT = 2.6
+
 
 # ---------------------------------------------------------------------------
 # On-disk dispatch format
@@ -73,9 +80,9 @@ def dispatch_paths(formulation: str, ratio: float) -> tuple[Path, Path]:
 def save_dispatch(dispatch: pd.DataFrame, meta: dict, formulation: str, ratio: float) -> Path:
     """Write a solved dispatch and its metadata (prices, ratio, OPEX, solver settings).
 
-    The metadata is what the plot scripts need for their titles and cannot recover from the
-    dispatch table itself -- which is the whole reason it is saved alongside, rather than a
-    solving script handing the numbers to a plotting function.
+    The metadata cannot be recovered from the dispatch table itself -- which is the whole
+    reason it is saved alongside, rather than a solving script handing the numbers to a
+    plotting function.
     """
     csv_path, json_path = dispatch_paths(formulation, ratio)
     DISPATCH_DIR.mkdir(parents=True, exist_ok=True)
@@ -83,13 +90,6 @@ def save_dispatch(dispatch: pd.DataFrame, meta: dict, formulation: str, ratio: f
     json_path.write_text(json.dumps(meta, indent=2))
     print(f"Saved dispatch to {csv_path}\nSaved metadata to {json_path}")
     return csv_path
-
-
-def title_of(name: str, meta: dict) -> str:
-    """Two-line figure title: which formulation, at which prices, for which OPEX."""
-    return (f"{name}  —  $c_G$ = {meta['c_g']:.3f} €/kWh,  $c_{{el}}$ = {meta['c_el']:.3f} €/kWh"
-            f"  |  $c_G/c_{{el}}$ = {meta['ratio']:.3f}\n"
-            f"OPEX = {meta['opex']:,.2f} €")
 
 
 def save_figure(fig, stem: str) -> Path:
@@ -189,73 +189,101 @@ def dispatch_figure(dispatch: pd.DataFrame, unit_panel: str | None) -> plt.Figur
 # The energy balance figure: where the electricity and heat come from
 # ---------------------------------------------------------------------------
 def plot_electrical_mix(dispatch: pd.DataFrame, ax=None) -> plt.Axes:
-    """Where the electricity comes from: grid import (area) and the CHPs' output (line),
-    against the electric demand they have to cover between them. Styled after the
-    "Electrical Supply Mix" panel of Erdem's own plot_dispatch_results_compact."""
+    """Where the electricity comes from: CHP output and grid import stacked, zero-order-held
+    per time step (no interpolation between them -- each value holds until the next step,
+    matching how the MILP's per-step decisions actually behave). The stack top is CHP + grid
+    import, so it landing exactly on the demand line is a visual check of the electrical
+    balance constraint. Styled after the "Electrical Supply Mix" panel of Erdem's own
+    plot_dispatch_results_compact."""
     if ax is None:
         _, ax = plt.subplots()
 
     k = dispatch["k"].to_numpy()
     p_chp = dispatch["Pout_CHP1"] + dispatch["Pout_CHP2"]
+    p_stack_top = p_chp + dispatch["Pgrid"]
 
-    ax.fill_between(k, 0, dispatch["Pgrid"], step="mid", alpha=0.45, color="#FDAE61",
-                    label="Grid import")
-    ax.plot(k, p_chp, color="#1B9E77", linewidth=2.0, label="CHP electrical output")
-    ax.plot(k, dispatch["P_D"], color="#111111", linewidth=1.7, linestyle="--",
+    ax.fill_between(k, 0, p_chp, step="mid", alpha=0.45, color="#1B9E77",
+                    edgecolor="#1B9E77", linewidth=1.2, label="CHP electrical output")
+    ax.fill_between(k, p_chp, p_stack_top, step="mid", alpha=0.45, color="#FDAE61",
+                    edgecolor="#FDAE61", linewidth=1.2, label="Grid import")
+    ax.step(k, dispatch["P_D"], where="mid", color="#111111", linewidth=1.7, linestyle="--",
             label="Electrical demand")
 
-    ax.set_title("Electrical Supply Mix")
     ax.set_ylabel("Power [kW]")
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.yaxis.set_minor_locator(plt.NullLocator())
-    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0)
+    # Above the axis rather than below: the two panels are stacked (sharex), so a legend below
+    # the top one would land on top of the heat panel underneath it.
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.18), ncol=3,
+              framealpha=0.95, frameon=True)
     return ax
 
 
 def plot_heat_and_gas(dispatch: pd.DataFrame, ax=None) -> plt.Axes:
-    """Where the heat comes from: boilers, CHPs and net TES discharge against the heat demand,
-    with the gas bought to make it as bars behind them. Styled after the "Heat Supply and Gas
-    Purchase" panel of Erdem's own plot_dispatch_results_compact."""
+    """Where the heat comes from: boiler and CHP heat stacked, zero-order-held per time step.
+    Boiler + CHP + net TES heat (discharge positive, charging negative) equals demand exactly
+    by the model's balance constraint, so the two are drawn accordingly: TES discharge stacks
+    on top of boiler+CHP up to the demand line (closing the gap when boiler+CHP alone falls
+    short); TES charging is the reverse case, where boiler+CHP alone already exceeds demand, so
+    the excess above the demand line is coloured separately to show it is being routed into
+    storage rather than meeting demand. Styled after the "Heat Supply and Gas Purchase" panel
+    of Erdem's own plot_dispatch_results_compact (gas purchased omitted -- not of interest
+    here)."""
     if ax is None:
         _, ax = plt.subplots()
 
     k = dispatch["k"].to_numpy()
     q_boiler = dispatch["Qout_B1"] + dispatch["Qout_B2"]
     q_chp = dispatch["Qout_CHP1"] + dispatch["Qout_CHP2"]
-    q_tes = dispatch["Qout_TES"] - dispatch["Qin_TES"]
-    q_gas = dispatch["Qin_B1"] + dispatch["Qin_B2"] + dispatch["Qin_CHP1"] + dispatch["Qin_CHP2"]
+    q_tes_net = dispatch["Qout_TES"] - dispatch["Qin_TES"]
+    q_stack_top = q_boiler + q_chp
 
-    ax.bar(k, q_gas, width=0.85, alpha=0.22, color="#33A02C", label="Gas purchased")
-    ax.plot(k, q_boiler, color="#E31A1C", linewidth=1.8, label="Boiler heat")
-    ax.plot(k, q_chp, color="#FF7F00", linewidth=1.8, label="CHP heat")
-    ax.plot(k, q_tes, color="#2C7FB8", linewidth=1.8, label="TES net heat")
-    ax.plot(k, dispatch["Q_D"], color="#111111", linewidth=1.7, linestyle="--",
+    ax.fill_between(k, 0, q_boiler, step="mid", alpha=0.45, color="#E31A1C",
+                    edgecolor="#E31A1C", linewidth=1.2, label="Boiler heat")
+    ax.fill_between(k, q_boiler, q_stack_top, step="mid", alpha=0.45, color="#FF7F00",
+                    edgecolor="#FF7F00", linewidth=1.2, label="CHP heat")
+    ax.fill_between(k, q_stack_top, q_stack_top + q_tes_net.clip(lower=0), step="mid",
+                    alpha=0.45, color="#2C7FB8", edgecolor="#2C7FB8", linewidth=1.2,
+                    label="TES discharge")
+    ax.fill_between(k, q_stack_top + q_tes_net.clip(upper=0), q_stack_top, step="mid",
+                    alpha=0.55, color="#A6CEE3", edgecolor="#2C7FB8", linewidth=1.0,
+                    hatch="////", label="TES charge")
+    ax.step(k, dispatch["Q_D"], where="mid", color="#111111", linewidth=1.7, linestyle="--",
             label="Heat demand")
 
-    ax.set_title("Heat Supply and Gas Purchase")
     ax.set_xlabel("Time step [h]")
-    ax.set_ylabel("Heat flow / gas input [kW]")
+    ax.set_ylabel("Heat flow [kW]")
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.yaxis.set_minor_locator(plt.NullLocator())
-    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.18), ncol=5,
+              framealpha=0.95, frameon=True)
     return ax
 
 
-def energy_balance_figure(dispatch: pd.DataFrame, title: str) -> plt.Figure:
+def energy_balance_figure(dispatch: pd.DataFrame) -> plt.Figure:
     """The electrical and heat/gas balances stacked on one shared time axis. Every formulation
     has an energy balance -- unlike the commitment δ, which the LP approximation does not have
     -- so this figure applies to all four."""
-    apply_style(width_cm=FIG_WIDTH_CM, aspect="golden", nrows=2, strict=True)
-    fig, axes = plt.subplots(2, 1, sharex=True,
-                             figsize=get_figsize(FIG_WIDTH_CM, "golden", nrows=2))
+    apply_style(width_cm=ENERGY_BALANCE_WIDTH_CM, aspect=ENERGY_BALANCE_ASPECT, nrows=2,
+                strict=True)
+    # Bumped up from apply_style's base sizes (10/10/9/9/9) for this figure only -- apply_style
+    # resets these rcParams from scratch on every call, so this does not leak into other plots.
+    plt.rcParams.update({
+        "font.size": 12, "axes.labelsize": 12,
+        "xtick.labelsize": 11, "ytick.labelsize": 11,
+        "legend.fontsize": 11,
+    })
+    fig, axes = plt.subplots(
+        2, 1, sharex=True,
+        figsize=get_figsize(ENERGY_BALANCE_WIDTH_CM, ENERGY_BALANCE_ASPECT, nrows=2))
 
     plot_electrical_mix(dispatch, ax=axes[0])
     plot_heat_and_gas(dispatch, ax=axes[1])
+    axes[1].set_xlim(0, 168)
 
-    fig.suptitle(title)
     fig.tight_layout()
-    # Both panels carry their legend outside the axes to the right, like Erdem's own
-    # plot_dispatch_results_compact does, so the plot area needs room on the right that
-    # tight_layout does not leave on its own.
-    fig.subplots_adjust(right=0.78, hspace=0.25)
+    # Both panels carry their legend above the axes (horizontal, like Erdem's own TES-panel
+    # legend), so the rows need a little room between them that tight_layout does not leave on
+    # its own.
+    fig.subplots_adjust(hspace=0.25)
     return fig

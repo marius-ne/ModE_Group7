@@ -90,7 +90,7 @@ def main():
     df = delta_sums()
     price_ratios = df["price_ratio"].to_numpy()
 
-    apply_style(width_cm=16, aspect=2.2, grid=True, strict=True)
+    apply_style(width_cm=16, aspect=2.6, grid=True, strict=True)
     fig, ax = plt.subplots(constrained_layout=True)
     ax.plot(price_ratios, df["sum_dB"], color=C_DB, linewidth=1.5, marker="^",
             markersize=MS, label=r"$\sum_{i,k}\,\delta_{\mathrm{B},i,k}$")
@@ -99,8 +99,6 @@ def main():
     ax.set_xscale("log")
     ax.set_xlabel(r"Price ratio $c_{\mathrm{gas}}\,/\,c_{\mathrm{el}}$ $[-]$")
     ax.set_ylabel(r"$\sum_{i,k}\,\delta_{i,k}\;[-]$")
-    ax.set_title(r"MILP Commitment: $\sum_{i,k}\,\delta_{\mathrm{B},i,k}$ and "
-                r"$\sum_{i,k}\,\delta_{\mathrm{CHP},i,k}$ vs Price Ratio", pad=18)
     ax.legend()
 
     # Fainter than the style's default grid, and extended to both axes' minor ticks too --
@@ -109,12 +107,12 @@ def main():
     ax.grid(True, which="minor", alpha=0.15, linewidth=0.3)
 
     ax.axvline(0.7, color="gray", linewidth=1.2, linestyle="--")
-    ax.axvline(1.0, color="gray", linewidth=1.2, linestyle="--")
+    ax.axvline(1.01, color="gray", linewidth=1.2, linestyle="--")
     y_lo, y_hi = ax.get_ylim()
     y_mid = 1.1 * (y_lo + y_hi) / 2
-    x_chp_mid = np.sqrt(price_ratios[0] * 0.7)      # geometric centre of CHP region
-    x_be_mid = np.sqrt(0.7 * 1.0)                   # geometric centre of break-even region
-    x_boiler_mid = np.sqrt(1.0 * price_ratios[-1])  # geometric centre of boiler region
+    x_chp_mid = np.sqrt(price_ratios[0] * 0.7)       # geometric centre of CHP region
+    x_be_mid = np.sqrt(0.7 * 1.01)                   # geometric centre of break-even region
+    x_boiler_mid = np.sqrt(1.01 * price_ratios[-1])  # geometric centre of boiler region
     ax.text(x_chp_mid, y_mid, "CHP-mode", ha="center", va="center",
             color="dimgray", fontweight="bold")
     ax.text(x_boiler_mid, y_mid, "Boiler-mode", ha="center", va="center",

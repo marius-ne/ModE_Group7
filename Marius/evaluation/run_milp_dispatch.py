@@ -29,17 +29,17 @@ Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
 P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
 
 
-def solve_and_save(ratio: float) -> tuple[pd.DataFrame, dict]:
+def solve_and_save(ratio: float, mip_gap: float = MIP_GAP) -> tuple[pd.DataFrame, dict]:
     """Solve the MILP at this price ratio, save the dispatch, and return it (dispatch, meta)."""
     c_g = C_EL * ratio
 
-    print(f"MILP  c_el={C_EL}  c_G={c_g}  ratio={ratio}")
-    opex, dispatch = solve_milp(Q_D, P_D, c_g, C_EL, mip_gap=MIP_GAP,
+    print(f"MILP  MIP_GAP={mip_gap}  c_el={C_EL}  c_G={c_g}  ratio={ratio}")
+    opex, dispatch = solve_milp(Q_D, P_D, c_g, C_EL, mip_gap=mip_gap,
                                 strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION)
     print(f"OPEX: {opex:,.2f}")
 
     meta = {"formulation": FORMULATION, "ratio": ratio, "c_g": c_g, "c_el": C_EL, "opex": opex,
-            "mip_gap": MIP_GAP, "strict_demand_satisfaction": STRICT_DEMAND_SATISFACTION}
+            "mip_gap": mip_gap, "strict_demand_satisfaction": STRICT_DEMAND_SATISFACTION}
     save_dispatch(dispatch, meta, FORMULATION, ratio)
     return dispatch, meta
 

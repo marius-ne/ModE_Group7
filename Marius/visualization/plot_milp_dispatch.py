@@ -14,22 +14,22 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Marius" / "evaluation"))
 
 from _dispatch_common import (
-    dispatch_figure, energy_balance_figure, ratio_from_argv, save_figure, title_of,
+    dispatch_figure, energy_balance_figure, ratio_from_argv, save_figure,
 )
 from run_milp_dispatch import solve_and_save
 
 FORMULATION = "milp"
-DEFAULT_RATIO = 2.0
+DEFAULT_RATIO = 0.45
 
 
 def main():
     ratio = ratio_from_argv(DEFAULT_RATIO)
-    dispatch, meta = solve_and_save(ratio)
+    dispatch, _ = solve_and_save(ratio,5e-4)
 
     fig = dispatch_figure(dispatch, unit_panel="binary")
     save_figure(fig, f"dispatch_{FORMULATION}_ratio{ratio:.3f}")
 
-    fig = energy_balance_figure(dispatch, title_of("MILP — energy balance", meta))
+    fig = energy_balance_figure(dispatch)
     save_figure(fig, f"energy_balance_{FORMULATION}_ratio{ratio:.3f}")
 
 

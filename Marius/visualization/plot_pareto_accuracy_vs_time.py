@@ -111,9 +111,9 @@ SOLVE_COLUMNS = [
 # formulations are named in the report.
 FORMULATION_LABELS = {
     "opex_milp": "MILP",
-    "opex_lp_lower": "$LP^L$",
-    "opex_lp_upper": "$LP^U$",
-    "opex_lp_approx": "$LP^{approx}$",
+    "opex_lp_lower": r"$\mathrm{LP^L}$",
+    "opex_lp_upper": r"$\mathrm{LP^U}$",
+    "opex_lp_approx": r"$\mathrm{LP^{approx}}$",
 }
 
 # The two surrogate families on the front, and the name each goes by here. Only these two of
@@ -329,7 +329,7 @@ def plot_pareto(rows: list[dict], out_stem: Path):
     Accuracy is plotted as the error 1 - R^2 rather than R^2 itself. Time is log-scaled since
     the methods are orders of magnitude apart.
     """
-    apply_style(width_cm=16, aspect="golden", grid=True, strict=True)
+    apply_style(width_cm=16, aspect=2.2, grid=True, strict=True)
     fig, ax = plt.subplots(constrained_layout=True)
 
     # Fainter than the style's default grid: here it is only a reading aid behind the markers
@@ -340,12 +340,18 @@ def plot_pareto(rows: list[dict], out_stem: Path):
         ax.scatter(row["seconds_per_point"], row["error"],
                    s=90, color=COLORS[row["method"]], edgecolors="black",
                    zorder=3, label=row["method"])
-        # The two MILPs sit close together in time, so their labels would overlap if both
-        # were drawn above the marker -- the loose one carries label_dy to move below it.
-        ax.annotate(row["label"],
-                    (row["seconds_per_point"], row["error"]),
-                    textcoords="offset points", xytext=(0, row.get("label_dy", 12)),
-                    ha="center", va="center", fontsize=9.5, fontweight="bold", zorder=4)
+        annotate_kwargs = dict(
+            textcoords="offset points",
+            xytext=(row.get("label_dx", 0), row.get("label_dy", 12)),
+            ha="center", va="center", fontsize=9.5, fontweight="bold", zorder=4,
+        )
+        # LP mean and the loose MILP sit low enough that their label would otherwise land on
+        # (or past) the x-axis -- pull the label above the point and draw a connecting arrow
+        # back down to it instead.
+        if row.get("arrow"):
+            annotate_kwargs["arrowprops"] = dict(
+                arrowstyle="-", color="0.3", linewidth=0.8, shrinkA=2, shrinkB=4)
+        ax.annotate(row["label"], (row["seconds_per_point"], row["error"]), **annotate_kwargs)
 
     # The Pareto front, now that BOTH axes are minimized: walk left to right in time and keep
     # a point only if nothing cheaper already achieved an error this low.
@@ -395,10 +401,12 @@ def main():
     rows = [
         {"method": GOLD_METHOD, "label": GOLD_METHOD,
          "seconds_per_point": t_gold, "r2_vs_gold": 1.0},
-        {"method": LOOSE_METHOD, "label": LOOSE_METHOD, "label_dy": -13,
+        {"method": LOOSE_METHOD, "label": LOOSE_METHOD, "label_dx": 26, "label_dy": 24,
+         "arrow": True,
          "seconds_per_point": df["time_milp"].mean(), "r2_vs_gold": r2_loose},
         # The legend already spells the mean out, so the marker annotation stays short.
-        {"method": LP_MEAN_METHOD, "label": "LP mean",
+        {"method": LP_MEAN_METHOD, "label": "LP mean", "label_dx": -34, "label_dy": 27,
+         "arrow": True,
          # The LP mean needs BOTH bounds, so its cost is the lower solve plus the upper solve.
          "seconds_per_point": (df["time_lp_lower"] + df["time_lp_upper"]).mean(),
          "r2_vs_gold": r2_lp},
@@ -413,8 +421,9 @@ def main():
             "method": f"Best {name} LR",  # legend entry
             "label": f"LR {name}: {FORMULATION_LABELS[col]}",  # annotation next to the marker
             # Both LRs cost the same one dot product, so they sit on top of each other in
-            # time; the 2D label goes below its marker so the two cannot overlap.
-            "label_dy": -13 if name == "2D" else 11,
+            # time; the 2D label goes below its marker (further down than a plain -13 would,
+            # to clear the Pareto front line) so the two cannot overlap.
+            "label_dy": -20 if name == "2D" else 11,
             "seconds_per_point": time_predict(mode, col, df),
             "r2_vs_gold": r2_lr,
         }

@@ -14,7 +14,7 @@ separately, on the same ratios, and cached to opex_lp_upper_modes_angle_40.csv.
 Two separate figures, each its own file:
   opex_vs_price_ratio_linear.png/.pdf   linear axes.
   opex_vs_price_ratio_log.png/.pdf      log-log axes, with the mean/worst LP-bound gap noted.
-Each carries two insets: a low-r zoom (leftmost decade tenth) and a zoom on the r in [0.8, 1.1]
+Each carries two insets: a low-r zoom (r up to 0.1) and a zoom on the r in [0.8, 1.1]
 transition region around the CHP/boiler break-even -- sized to fully frame the four main
 curves (MILP, LP lower, LP upper min, LP approx) within that x-range.
 
@@ -129,13 +129,13 @@ def _plot_lp_upper(axis, ms: float = MS) -> None:
     """Faint individual modes + bold best-of-two line."""
     axis.plot(price_ratios, opex_lp_upper_bo_values,
               color=C_LP_UB_BO,  linewidth=0.9, alpha=0.6, linestyle=(0, (5, 3)),
-              label=r"$LP^U_B$")
+              label=r"$\mathrm{LP^U_B}$")
     axis.plot(price_ratios, opex_lp_upper_chp_values,
               color=C_LP_UB_CHP, linewidth=0.9, alpha=0.6, linestyle=(0, (2, 2)),
-              label=r"$LP^U_{CHP}$")
+              label=r"$\mathrm{LP^U_{CHP}}$")
     axis.plot(price_ratios, opex_lp_upper_values,
               color=C_LP_UB_MIN, linewidth=1.5, linestyle="-", marker="^", markersize=ms,
-              label=r"$LP^U$")
+              label=r"$\mathrm{LP^U}$")
 
 
 def _plot_main_series(axis, ms: float = MS) -> None:
@@ -145,11 +145,11 @@ def _plot_main_series(axis, ms: float = MS) -> None:
     axis.plot(price_ratios, opex_milp_values, color=C_MILP, linewidth=1.8, linestyle="-",
               marker="o", markersize=ms, label="MILP")
     axis.plot(price_ratios, opex_lp_lower_values, color=C_LP_LOWER, linewidth=1.5,
-              linestyle=(0, (4, 2)), marker="s", markersize=ms, label=r"$LP^L$")
+              linestyle=(0, (4, 2)), marker="s", markersize=ms, label=r"$\mathrm{LP^L}$")
     _plot_lp_upper(axis, ms=ms)
     axis.plot(price_ratios, opex_lp_approx_mean_values, color=C_LP_APPROX, linewidth=1.5,
               linestyle=(0, (3, 1, 1, 1)), marker="*", markersize=ms + 1,
-              label=r"$LP^{approx}$")
+              label=r"$\mathrm{LP^A}$")
 
 
 # The four headline curves an inset's y-limits are sized to -- not the two faint LP-upper
@@ -173,7 +173,7 @@ def _inset_ylim(xlim: tuple[float, float], log: bool, extra_top: float = 0.0) ->
     if log:
         return lo * 0.96, hi * (1.04 + extra_top)
     pad = 0.04 * (hi - lo)
-    return lo - pad, hi + pad + extra_top * (hi - lo)
+    return lo - 2*pad, hi + pad + extra_top * (hi - lo)
 
 
 def _add_inset(ax, rect: list[float], xlim: tuple[float, float], title: str, log: bool,
@@ -196,9 +196,11 @@ def _add_inset(ax, rect: list[float], xlim: tuple[float, float], title: str, log
     return axins
 
 
-# Low-r inset: leftmost decade tenth of the log span, in both figures the same absolute window.
-INS_X_LO = price_ratios[0]
-INS_X_HI = price_ratios[0] * (price_ratios[-1] / price_ratios[0]) ** 0.10
+# Low-r inset: fixed absolute window up to r=0.2, wide enough to always cover several sampled
+# ratios so all four headline curves show as visible line segments rather than lone dots.
+# The lower limit is padded below the first sample so it doesn't sit exactly on the y-axis.
+INS_X_HI = 0.2
+INS_X_LO = price_ratios[0] - 0.1 * (INS_X_HI - price_ratios[0])
 INS_TITLE = f"low-$r$ zoom ($r≤{INS_X_HI:.2f}$)"
 
 # Transition-region inset: r in [0.8, 1.1], around the CHP/boiler break-even at r=1.
@@ -207,17 +209,16 @@ INS2_TITLE = r"zoom $r\in[0.8,\,1.1]$"
 
 
 def plot_linear() -> None:
-    apply_style(width_cm=16, aspect="golden", grid=True, strict=True)
+    apply_style(width_cm=16, aspect=2.2, grid=True, strict=True)
     fig, ax = plt.subplots(constrained_layout=True)
 
     _plot_main_series(ax)
     ax.set_xlabel(r"Price ratio $c_{\mathrm{gas}}\,/\,c_{\mathrm{el}}$ $[-]$")
     ax.set_ylabel(OPEX_YLABEL)
-    ax.set_title("OPEX vs Price Ratio (1D angle training set)")
     ax.legend()
     ax.grid(alpha=0.25, linewidth=0.4)
 
-    _add_inset(ax, [0.58, 0.07, 0.25, 0.3], (INS_X_LO, INS_X_HI), INS_TITLE, log=False,
+    _add_inset(ax, [0.65, 0.07, 0.25, 0.3], (INS_X_LO, INS_X_HI), INS_TITLE, log=False,
                extra_top=0.25)
     _add_inset(ax, [0.25, 0.58, 0.25, 0.3], (INS2_X_LO, INS2_X_HI), INS2_TITLE, log=False)
 
@@ -228,7 +229,7 @@ def plot_linear() -> None:
 
 
 def plot_log() -> None:
-    apply_style(width_cm=16, aspect="golden", grid=True, strict=True)
+    apply_style(width_cm=16, aspect=2.2, grid=True, strict=True)
     fig, ax = plt.subplots(constrained_layout=True)
 
     _plot_main_series(ax)
@@ -250,7 +251,6 @@ def plot_log() -> None:
         f"worst $\\Delta$: LP lower: {lower_gaps[wi_lo]:.2%} at $r={r_masked[wi_lo]:.3f}$"
         f"  |  LP upper: {upper_gaps[wi_up]:.2%} at $r={r_masked[wi_up]:.3f}$"
     )
-    ax.set_title("OPEX vs Price Ratio — log scale", pad=24)
     ax.text(0.5, 1.0, gap_subtitle, transform=ax.transAxes,
             ha="center", va="bottom", fontsize=7, linespacing=1.4)
     ax.legend()
