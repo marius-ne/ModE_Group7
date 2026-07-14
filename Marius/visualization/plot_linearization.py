@@ -34,13 +34,6 @@ from src.visualization.style import apply_style
 
 OUT_DIR = ROOT / "Marius" / "visualization"
 
-FS = 14  # base font size -- change to rescale everything
-FS_TICK = FS - 2
-FS_LABEL = FS
-FS_LEGEND = FS - 1
-FS_TITLE = FS + 1
-FS_SUPTITLE = FS + 3
-
 
 def boiler_heat_output(qin: float) -> float:
     """Boiler thermal output for fuel input qin [kW]: the same piecewise-linear part-load
@@ -83,29 +76,23 @@ def chp_electricity_output(qin: float) -> float:
 
 def plot_characteristics_alone(x_boiler: np.ndarray, x_chp: np.ndarray) -> plt.Figure:
     """The three piecewise-linear curves alone, with no linear comparison."""
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
+    fig, axes = plt.subplots(1, 3, constrained_layout=True)
 
     axes[0].plot(x_boiler, [boiler_heat_output(x) for x in x_boiler], linewidth=2, color="C0")
-    axes[0].set_title("Boiler heat", fontsize=FS_TITLE)
-    axes[0].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{B}}$ [kW]", fontsize=FS_LABEL)
-    axes[0].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{B}}$ [kW]", fontsize=FS_LABEL)
+    axes[0].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{B}}$ [kW]")
+    axes[0].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{B}}$ [kW]")
 
     axes[1].plot(x_chp, [chp_heat_output(x) for x in x_chp], linewidth=2, color="C0")
-    axes[1].set_title("CHP heat", fontsize=FS_TITLE)
-    axes[1].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
-    axes[1].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
+    axes[1].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]")
+    axes[1].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]")
 
     axes[2].plot(x_chp, [chp_electricity_output(x) for x in x_chp], linewidth=2, color="C0")
-    axes[2].set_title("CHP electricity", fontsize=FS_TITLE)
-    axes[2].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
-    axes[2].set_ylabel(r"$\dot{P}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
+    axes[2].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]")
+    axes[2].set_ylabel(r"$\dot{P}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]")
 
     for ax in axes:
-        ax.tick_params(labelsize=FS_TICK)
         ax.grid(True, linestyle=":", alpha=0.6)
 
-    fig.suptitle("Piecewise-linear part-load characteristics", fontsize=FS_SUPTITLE)
-    fig.tight_layout()
     return fig
 
 
@@ -113,48 +100,43 @@ def plot_characteristics_vs_lp_approx(x_boiler: np.ndarray, x_chp: np.ndarray) -
     """The piecewise-linear curves against the LP approximation's mean-efficiency line --
     i.e. what solve_lp_approximated(mode="mean_efficiency") assumes instead of the real
     part-load curve."""
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
+    fig, axes = plt.subplots(1, 3, constrained_layout=True)
 
     axes[0].plot(x_boiler, [boiler_heat_output(x) for x in x_boiler],
                 label="Piecewise-linear", linewidth=2, color="C0")
     axes[0].plot(x_boiler, m_B_heat_mean * x_boiler,
                 label=f"LP approx mean-eff (m={m_B_heat_mean:.4f})",
                 linestyle="--", color="C1", linewidth=2)
-    axes[0].set_title("Boiler heat", fontsize=FS_TITLE)
-    axes[0].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{B}}$ [kW]", fontsize=FS_LABEL)
-    axes[0].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{B}}$ [kW]", fontsize=FS_LABEL)
+    axes[0].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{B}}$ [kW]")
+    axes[0].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{B}}$ [kW]")
 
     axes[1].plot(x_chp, [chp_heat_output(x) for x in x_chp],
                 label="Piecewise-linear", linewidth=2, color="C0")
     axes[1].plot(x_chp, m_CHP_heat_mean * x_chp,
                 label=f"LP approx mean-eff (m={m_CHP_heat_mean:.4f})",
                 linestyle="--", color="C1", linewidth=2)
-    axes[1].set_title("CHP heat", fontsize=FS_TITLE)
-    axes[1].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
-    axes[1].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
+    axes[1].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]")
+    axes[1].set_ylabel(r"$\dot{Q}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]")
 
     axes[2].plot(x_chp, [chp_electricity_output(x) for x in x_chp],
                 label="Piecewise-linear", linewidth=2, color="C0")
     axes[2].plot(x_chp, m_CHP_el_mean * x_chp,
                 label=f"LP approx mean-eff (m={m_CHP_el_mean:.4f})",
                 linestyle="--", color="C1", linewidth=2)
-    axes[2].set_title("CHP electricity", fontsize=FS_TITLE)
-    axes[2].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
-    axes[2].set_ylabel(r"$\dot{P}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]", fontsize=FS_LABEL)
+    axes[2].set_xlabel(r"$\dot{Q}^{\,\mathrm{in}}_{\mathrm{CHP}}$ [kW]")
+    axes[2].set_ylabel(r"$\dot{P}^{\,\mathrm{out}}_{\mathrm{CHP}}$ [kW]")
 
     for ax in axes:
-        ax.tick_params(labelsize=FS_TICK)
         ax.grid(True, linestyle=":", alpha=0.6)
-        ax.legend(fontsize=FS_LEGEND)
+        top = ax.get_ylim()[1]
+        ax.set_ylim(top=top * 1.3)
+        ax.legend(loc="upper left")
 
-    fig.suptitle("LP approximation characteristics vs piecewise-linear model",
-                fontsize=FS_SUPTITLE)
-    fig.tight_layout()
     return fig
 
 
 def main():
-    apply_style(grid=False, strict=True)
+    apply_style(width_cm=24, aspect=3.9, ncols=3, grid=False, strict=True)
 
     x_boiler = np.linspace(0.0, Q_out_nom_B / eta_nom_B, 300)
     x_chp = np.linspace(0.0, Q_out_nom_CHP / eta_nom_CHP_th, 300)

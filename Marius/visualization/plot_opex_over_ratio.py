@@ -199,7 +199,7 @@ def _add_inset(ax, rect: list[float], xlim: tuple[float, float], title: str, log
 # Low-r inset: fixed absolute window up to r=0.2, wide enough to always cover several sampled
 # ratios so all four headline curves show as visible line segments rather than lone dots.
 # The lower limit is padded below the first sample so it doesn't sit exactly on the y-axis.
-INS_X_HI = 0.2
+INS_X_HI = 0.3
 INS_X_LO = price_ratios[0] - 0.1 * (INS_X_HI - price_ratios[0])
 INS_TITLE = f"low-$r$ zoom ($r≤{INS_X_HI:.2f}$)"
 
