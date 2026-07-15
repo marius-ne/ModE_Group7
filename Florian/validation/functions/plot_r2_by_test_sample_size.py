@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import matplotlib
 import pandas as pd
@@ -10,6 +11,16 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parents[3]
+ERDEM_DIR = ROOT / "Erdem"
+if str(ERDEM_DIR) not in sys.path:
+    sys.path.insert(0, str(ERDEM_DIR))
+
+from src.visualization.style import (  # noqa: E402
+    apply_style,
+    get_figsize,
+    safe_figure,
+)
+
 VALIDATION_DIR = ROOT / "Florian" / "validation"
 OUTPUT_PATH = VALIDATION_DIR / "r2_by_sample_size_2d_milp_lpupper.png"
 R2_2D_PATH = VALIDATION_DIR / "results_2d_models" / "intra_model_r2_scores_summary.csv"
@@ -17,17 +28,13 @@ R2_2D_PATH = VALIDATION_DIR / "results_2d_models" / "intra_model_r2_scores_summa
 SAMPLE_SIZES = [5, 20, 40]
 MODELS = ["MILP", "LP upper"]
 MODEL_LABELS = {
-    "MILP": "LR MILP (2D)",
-    "LP upper": "LR LPupper (2D)",
+    "MILP": "2D LR MILP",
+    "LP upper": "2D LR $\mathrm{LP}^{\mathrm{U}}$",
 }
 MODEL_COLORS = {
     "MILP": "tab:blue",
     "LP upper": "tab:orange",
 }
-
-
-def reset_plot_settings() -> None:
-    plt.rcdefaults()
 
 
 def load_r2_by_sample_size() -> pd.DataFrame:
@@ -48,12 +55,11 @@ def load_r2_by_sample_size() -> pd.DataFrame:
     return df.sort_values("training_size")
 
 
-def plot_r2_by_sample_size() -> Path:
-    regression_r2 = load_r2_by_sample_size()
-
-    reset_plot_settings()
-    fig, ax = plt.subplots(figsize=(10, 7.5))
-
+def plot_r2_by_sample_size_on_ax(
+    ax: plt.Axes,
+    regression_r2: pd.DataFrame,
+) -> None:
+    """Draw the R2-by-sample-size plot on an existing axes."""
     for model in MODELS:
         ax.plot(
             regression_r2["training_size"],
@@ -64,17 +70,30 @@ def plot_r2_by_sample_size() -> Path:
             label=MODEL_LABELS[model],
         )
 
-    ax.set_title("2D regression model $R^2$ by sample size")
+    #ax.set_title("2D regression model $R^2$ by sample size")
     ax.set_xlabel("Sample size")
     ax.set_ylabel("$R^2$")
     ax.set_xticks(SAMPLE_SIZES)
     ax.set_ylim(0.9, 1.0)
     ax.grid(axis="y", alpha=0.3)
-    ax.legend()
+    ax.legend(loc="lower right")
+
+
+def plot_r2_by_sample_size() -> Path:
+    regression_r2 = load_r2_by_sample_size()
+
+    apply_style(width_cm=16, aspect=(4, 3), science=True, grid=False, latex=True)
+    fig, ax = plt.subplots(figsize=get_figsize(width_cm=16, aspect=(4, 3)))
+
+    plot_r2_by_sample_size_on_ax(ax, regression_r2)
     fig.tight_layout()
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUTPUT_PATH, dpi=300)
+    safe_figure(
+        fig,
+        save_path=OUTPUT_PATH.parent,
+        filename=OUTPUT_PATH.stem,
+        file_type=OUTPUT_PATH.suffix.lstrip("."),
+    )
     plt.close(fig)
 
     print(f"Saved 2D R2 by sample size plot to: {OUTPUT_PATH}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import matplotlib
 import pandas as pd
@@ -11,6 +12,17 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[3]
+ERDEM_DIR = ROOT / "Erdem"
+if str(ERDEM_DIR) not in sys.path:
+    sys.path.insert(0, str(ERDEM_DIR))
+
+from src.visualization.style import (  # noqa: E402
+    apply_style,
+    get_figsize,
+    reset_plot_style,
+    safe_figure,
+)
+
 VALIDATION_DIR = ROOT / "Florian" / "validation"
 OUTPUT_PATH = VALIDATION_DIR / "r2_vs_milp_1d_vs_2d_sample_size_40_barchart.png"
 R2_1D_PATH = VALIDATION_DIR / "results_1d_models" / "r2_vs_milp_summary.csv"
@@ -60,8 +72,9 @@ def load_r2_values() -> pd.DataFrame:
 
 
 def plot_r2_values(values: pd.DataFrame) -> Path:
-    plt.rcdefaults()
-    fig, ax = plt.subplots(figsize=(10, 7.5))
+    reset_plot_style()
+    apply_style(width_cm=16, aspect=(4, 3), science=True, grid=False, latex=True)
+    fig, ax = plt.subplots(figsize=get_figsize(width_cm=16, aspect=(4, 3)))
     x = np.arange(len(MODELS))
     width = 0.35
 
@@ -122,7 +135,12 @@ def plot_r2_values(values: pd.DataFrame) -> Path:
         bbox_to_anchor=(0.5, 0.0),
     )
     fig.tight_layout(rect=(0, 0.22, 1, 0.93))
-    fig.savefig(OUTPUT_PATH, dpi=300)
+    safe_figure(
+        fig,
+        save_path=OUTPUT_PATH.parent,
+        filename=OUTPUT_PATH.stem,
+        file_type=OUTPUT_PATH.suffix.lstrip("."),
+    )
     plt.close(fig)
     return OUTPUT_PATH
 

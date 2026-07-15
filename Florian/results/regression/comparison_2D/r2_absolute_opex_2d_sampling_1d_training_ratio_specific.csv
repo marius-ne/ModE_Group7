@@ -1,5 +1,0 @@
-target,validation_file,r2_absolute_opex
-opex_lp_approx,0.9255414014082115
-opex_lp_lower,0.9255414267121005
-opex_lp_upper,0.9508952834028734
-opex_milp, 0.9224180783991931
