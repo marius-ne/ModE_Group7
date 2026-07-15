@@ -10,14 +10,14 @@ from pathlib import Path
 
 from _evaluation_common import generate_points, solve_all
 
-SAMPLING_MODE = "1D"  # "1D" -> price ratio (gas/electricity), "2D" -> (gas_price, electricity_price) pair
-N_TRAIN = 2
+SAMPLING_MODE = "2D"  # "1D" -> price ratio (gas/electricity), "2D" -> (gas_price, electricity_price) pair
+N_TRAIN = 5
 SAMPLING_METHOD_2D = "lhs"  # training sampling method for 2D mode ("sobol", "lhs" or "random")
 SAMPLING_METHOD_1D = "angle"  # training sampling method for 1D mode ("log" or "angle")
 
 
 def default_out_csv(sampling_mode: str) -> Path:
-    return Path(f"Marius/results/evaluation_{N_TRAIN}_training_samples_{sampling_mode}.csv")
+    return Path(f"Marius/results/2D_evaluation_{N_TRAIN}_training_samples_{sampling_mode}.csv")
 
 
 def run(sampling_mode: str = SAMPLING_MODE, n_train: int = N_TRAIN, method_2d: str = SAMPLING_METHOD_2D,

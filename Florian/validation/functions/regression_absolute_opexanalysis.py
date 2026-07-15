@@ -7,11 +7,11 @@ import pandas as pd
 from sklearn.metrics import r2_score
 
 
-VALIDATION_DIR = Path("Florian/validation")
-TEST_DATA_PATH = Path("Marius/results/evaluation_10_test_samples_2D.csv")
+VALIDATION_DIR = Path("Florian/validation/results_1d_models")
+TEST_DATA_PATH = Path("Marius/results/evaluation_lhs_10_test_2D.csv")
 OUTPUT_CSV = VALIDATION_DIR / "absolute_opex_r2_by_training_size.csv"
 
-TRAINING_SAMPLE_SIZES = [2, 5, 20, 40]
+TRAINING_SAMPLE_SIZES = [5, 20, 40]
 FILE_PATTERN = re.compile(
     r"^(?P<training_size>\d+)_train_10_test_ratio_(?P<target>opex_(?:milp|lp_upper|lp_lower|lp_approx))\.csv$"
 )
@@ -53,8 +53,7 @@ def infer_price_multiplier(
 ) -> tuple[float, str]:
     raw_price = test_df[electricity_column]
     candidates = [
-        (raw_price, "raw electricity price"),
-        (raw_price / 1000.0, "electricity price divided by 1000"),
+        (raw_price / 1000.0, "electricity price divided by 1000")
     ]
 
     errors = []

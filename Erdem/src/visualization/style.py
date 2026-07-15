@@ -166,6 +166,7 @@ def apply_style(
                 \usepackage{amsmath}
                 \usepackage{amssymb}
                 \usepackage{siunitx}
+                \usepackage{textcomp}
             """,
 
         })

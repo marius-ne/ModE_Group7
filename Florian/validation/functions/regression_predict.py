@@ -16,24 +16,26 @@ from sklearn.metrics import r2_score
 # "pipeline"       -> predict with every .joblib model in the selected joblibs directory
 # "ratios"          -> use one feature: ratio = gas price / electricity price
 # "discrete_prices" -> use two features: gas price and electricity price
-PREDICTION_MODE = "pipeline"
+# "all_ratios"      -> predict a selected ratio test CSV with all ratio models
+PREDICTION_MODE = "all_ratios"
 
 # The script also accepts command line arguments, but these values are the
 # easiest place to change paths when running the file directly from an IDE.
 PIPELINE_MODEL_DIR = "Florian"
-PIPELINE_OUTPUT_DIR = "Florian/validation/pipeline_predictions"
+PIPELINE_OUTPUT_DIR = "Florian/revalidation"
 RATIO_MODEL_DIR = "Florian/validation/joblibs"
 DISCRETE_PRICE_MODEL_DIR = "Florian/validation/joblibs"
-RATIO_MODEL_PREFIX = "2"
+RATIO_MODEL_PREFIX = "40"
 
 RATIO_TEST_SAMPLE_CSV = "Marius/results/evaluation_lhs_10_test_1D.csv"
 DISCRETE_PRICE_TEST_SAMPLE_CSV = "Marius/results/evaluation_lhs_10_test_2D.csv"
 
 OUTPUT_CSV = None
+ALL_RATIOS_OUTPUT_DIR = "Florian/validation/pipeline_predictions"
 
 
 OPEX_TARGETS = ["opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"]
-VALID_MODES = ["pipeline", "ratios", "discrete_prices"]
+VALID_MODES = ["pipeline", "ratios", "discrete_prices", "all_ratios"]
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -65,11 +67,11 @@ def build_mode_configs() -> dict[str, ModeConfig]:
             model_dir=as_repo_path(DISCRETE_PRICE_MODEL_DIR),
             test_sample_csv=as_repo_path(DISCRETE_PRICE_TEST_SAMPLE_CSV),
             model_patterns=(
-                "2D_40_2d_discrete_absolute_{target}.joblib",
-                "surrogate_model_2d_prices_40_{target}.joblib",
-                "surrogate_model_no_offset_2d_{target}.joblib",
-                "surrogate_model_2d_sampling_1d_training_2d_{target}.joblib",
-                "_2d_{target}.joblib",
+                f"2D_{RATIO_MODEL_PREFIX}_2d_discrete_absolute_{{target}}.joblib",
+                f"surrogate_model_2d_prices_{RATIO_MODEL_PREFIX}_{{target}}.joblib",
+                f"surrogate_model_no_offset_2d_{{target}}.joblib",
+                f"surrogate_model_2d_sampling_1d_training_2d_{{target}}.joblib",
+                f"_2d_{{target}}.joblib",
             ),
             output_suffix="2d",
         ),
@@ -135,6 +137,11 @@ def parse_args() -> argparse.Namespace:
         default=OUTPUT_CSV,
         help="Optional combined output CSV path. If omitted, only the per-model CSVs and R2 summary are written.",
     )
+    parser.add_argument(
+        "--all-ratios-output-dir",
+        default=ALL_RATIOS_OUTPUT_DIR,
+        help="Directory for all_ratios mode outputs.",
+    )
     return parser.parse_args()
 
 
@@ -197,6 +204,14 @@ def infer_target_from_model_path(model_path: Path) -> str:
             f"Expected one of {OPEX_TARGETS} in the file name."
         )
     raise ValueError(f"Model file name matches multiple targets: {model_path.name} -> {matches}")
+
+
+def infer_training_size_from_ratio_model_path(model_path: Path) -> int | None:
+    prefix = model_path.stem.split("_ratio_", maxsplit=1)[0]
+    try:
+        return int(prefix)
+    except ValueError:
+        return None
 
 
 def feature_names_for_model(model) -> list[str]:
@@ -377,6 +392,103 @@ def write_r2_summary(prediction_frames: list[pd.DataFrame], output_dir: Path, sa
     r2_df.to_csv(output_path, index=False)
     print(f"Saved R2 summary to: {output_path}")
     return output_path
+
+
+def discover_ratio_model_files(model_dir: Path) -> list[Path]:
+    if not model_dir.exists():
+        raise FileNotFoundError(f"Model directory does not exist: {model_dir}")
+
+    model_paths = sorted(model_dir.glob("*_ratio_opex_*.joblib"))
+    if not model_paths:
+        raise FileNotFoundError(f"No ratio .joblib models found in: {model_dir}")
+    return model_paths
+
+
+def predict_all_ratio_models_for_test_csv(
+    test_sample_csv: Path,
+    model_dir: Path,
+    output_dir: Path,
+    output_csv: Path | None = None,
+) -> list[Path]:
+    if not test_sample_csv.exists():
+        raise FileNotFoundError(f"Test sample CSV does not exist: {test_sample_csv}")
+
+    df_test = pd.read_csv(test_sample_csv).reset_index(drop=True)
+    missing = [column for column in ("ratio", *OPEX_TARGETS) if column not in df_test.columns]
+    if missing:
+        raise ValueError(
+            f"Ratio test sample is missing columns {missing}. "
+            f"Available columns are: {list(df_test.columns)}"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_paths = discover_ratio_model_files(model_dir)
+    sample_size = len(df_test)
+    prediction_frames = []
+    summary_rows = []
+    written_paths = []
+
+    print("Mode: all_ratios")
+    print(f"Model directory: {model_dir}")
+    print(f"Test sample: {test_sample_csv}")
+    print(f"Found {len(model_paths)} ratio model file(s).")
+
+    for model_path in model_paths:
+        target = infer_target_from_model_path(model_path)
+        training_size = infer_training_size_from_ratio_model_path(model_path)
+        model = joblib.load(model_path)
+        y_test = df_test[target].to_numpy()
+        y_pred = model.predict(df_test[["ratio"]])
+        r2 = r2_score(y_test, y_pred)
+
+        result = pd.DataFrame(
+            {
+                "y_test": y_test,
+                "y_pred": y_pred,
+                "r2": r2,
+            }
+        )
+
+        output_name_prefix = (
+            f"{training_size}_train_{sample_size}_test"
+            if training_size is not None
+            else f"{model_path.stem}_{sample_size}_test"
+        )
+        output_path = output_dir / f"{output_name_prefix}_ratio_{target}.csv"
+        result.to_csv(output_path, index=False)
+        written_paths.append(output_path)
+        prediction_frames.append(
+            result.assign(
+                training_size=training_size,
+                target=target,
+                model_file=display_path(model_path),
+                sample_index=df_test.index,
+            )
+        )
+        summary_rows.append(
+            {
+                "training_size": training_size,
+                "target": target,
+                "model_file": display_path(model_path),
+                "r2": r2,
+                "n_samples": sample_size,
+            }
+        )
+        print(f"{model_path.name}: {target}, R2 = {r2:.6f} -> {output_path.name}")
+
+    summary_df = pd.DataFrame(summary_rows).sort_values(["training_size", "target"])
+    summary_path = output_dir / "r2_scores_summary.csv"
+    summary_df.to_csv(summary_path, index=False)
+    written_paths.append(summary_path)
+    print(f"Saved R2 summary to: {summary_path}")
+
+    if output_csv is not None:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        pd.concat(prediction_frames, ignore_index=True).to_csv(output_csv, index=False)
+        written_paths.append(output_csv)
+        print(f"Saved combined predictions to: {output_csv}")
+
+    return written_paths
 
 
 def predict_model_file(
@@ -577,6 +689,15 @@ def run_prediction(mode: str, config: ModeConfig, output_csv: Path | None) -> li
 def main() -> None:
     args = parse_args()
     output_csv = as_repo_path(args.output) if args.output else None
+
+    if args.mode == "all_ratios":
+        predict_all_ratio_models_for_test_csv(
+            test_sample_csv=as_repo_path(args.test_sample or RATIO_TEST_SAMPLE_CSV),
+            model_dir=as_repo_path(args.ratio_model_dir),
+            output_dir=as_repo_path(args.all_ratios_output_dir),
+            output_csv=output_csv,
+        )
+        return
 
     if args.mode == "pipeline":
         override_test_sample = as_repo_path(args.test_sample) if args.test_sample else None
