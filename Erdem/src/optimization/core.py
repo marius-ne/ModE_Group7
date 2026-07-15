@@ -3,6 +3,9 @@
 Optimization module for minimzation of the OPEX of a multi-energy system (MES).
 """
 from pathlib import Path
+import os
+import re
+import tempfile
 import pandas as pd
 import numpy as np
 import pyomo.environ as pyo
@@ -981,6 +984,15 @@ def _extract_lp_solution(
     return pd.DataFrame(rows)
 
 
+def _extract_milp_node_count(log_path: Path) -> int | None:
+    """Parse the number of branch-and-bound nodes Gurobi explored (i.e. the number of LP
+    relaxations solve_milp's MILP took to solve) from its "Explored N nodes (...)" solve
+    log summary line. Returns None if the line is not found (e.g. solve failed before
+    reaching that point)."""
+    match = re.search(r"Explored (\d+) nodes", log_path.read_text(errors="ignore"))
+    return int(match.group(1)) if match else None
+
+
 def solve_milp(
         Q_D,
         P_D,
@@ -1004,7 +1016,9 @@ def solve_milp(
     :param raw_normalized: (only with normalize=True) return OPEX/c_el instead of OPEX
     :param strict_demand_satisfaction: True → equality balances; False → >= inequalities
     :param tee: Stream solver output to console
-    :return: (opex, dispatch_df) with Marius-format column names
+    :return: (opex, dispatch_df) with Marius-format column names; dispatch_df.attrs
+        additionally carries "milp_num_lps", the number of branch-and-bound LP relaxations
+        Gurobi explored to solve the MILP (None if it could not be parsed from the solve log).
     """
     Q_D_s = pd.Series(np.asarray(Q_D, dtype=float), index=range(1, N + 1))
     P_D_s = pd.Series(np.asarray(P_D, dtype=float), index=range(1, N + 1))
@@ -1012,7 +1026,14 @@ def solve_milp(
     m = build_milp(Q_D_s, P_D_s, c_g, c_el, normalize=normalize,
                    strict_demand_satisfaction=strict_demand_satisfaction)
 
-    solve_model(m, MIPGap=mip_gap, TimeLimit=900, tee=tee)
+    log_fd, log_path_str = tempfile.mkstemp(suffix=".log", prefix="gurobi_milp_")
+    os.close(log_fd)
+    log_path = Path(log_path_str)
+    try:
+        solve_model(m, MIPGap=mip_gap, TimeLimit=900, LogFile=str(log_path), tee=tee)
+        num_lps = _extract_milp_node_count(log_path)
+    finally:
+        log_path.unlink(missing_ok=True)
 
     raw_obj = pyo.value(m.OBJ)
     if normalize:
@@ -1047,7 +1068,9 @@ def solve_milp(
             "Pout_CHP1": pyo.value(m.P_out_CHP[1, k]),
             "Pout_CHP2": pyo.value(m.P_out_CHP[2, k]),
         })
-    return opex, pd.DataFrame(rows)
+    dispatch_df = pd.DataFrame(rows)
+    dispatch_df.attrs["milp_num_lps"] = num_lps
+    return opex, dispatch_df
 
 
 def solve_lp_lower(

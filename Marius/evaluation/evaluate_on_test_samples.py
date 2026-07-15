@@ -13,7 +13,7 @@ from pathlib import Path
 
 from _evaluation_common import generate_shared_test_points, solve_all, derive_1d_from_2d, TEST_SEED
 
-N_TEST = 40
+N_TEST = 10
 TEST_METHOD_2D = "lhs"  # "lhs", "sobol" or "random"
 N_CORNER = 0
 N_EDGES = 0

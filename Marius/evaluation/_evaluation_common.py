@@ -34,6 +34,11 @@ OPEX_COLUMNS = ["opex_milp", "opex_lp_lower", "opex_lp_upper", "opex_lp_approx"]
 # ever has to re-solve just to find out how long a formulation takes.
 TIME_COLUMNS = ["time_milp", "time_lp_lower", "time_lp_upper", "time_lp_approx"]
 
+# Number of branch-and-bound LP relaxations Gurobi explored to solve the MILP (see
+# solve_milp's docstring in Erdem/src/optimization/core.py), recorded alongside the OPEX
+# it produced -- a property of that one MILP solve, not of the units its OPEX is in.
+MILP_NUM_LPS_COLUMN = "milp_num_lps"
+
 _demand_df = pd.read_csv(ROOT / "energy_demands.csv")
 Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
 P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
@@ -119,9 +124,9 @@ def derive_1d_from_2d(df_2d: pd.DataFrame) -> pd.DataFrame:
     df_1d = pd.DataFrame({"ratio": df_2d["gas_price_MWh"] / df_2d["electricity_price_MWh"]})
     for col in OPEX_COLUMNS:
         df_1d[col] = df_2d[col] / c_el
-    # Solve times carry over verbatim: they are the runtime of the 2D solve these rows were
-    # derived from, in seconds, and seconds do not get divided by an electricity price.
-    for col in TIME_COLUMNS:
+    # Solve times and the MILP node count carry over verbatim: they are properties of the
+    # 2D solve these rows were derived from, not values that scale with an electricity price.
+    for col in [*TIME_COLUMNS, MILP_NUM_LPS_COLUMN]:
         if col in df_2d.columns:
             df_1d[col] = df_2d[col]
     return df_1d
@@ -146,7 +151,8 @@ def solve_all(points: pd.DataFrame) -> pd.DataFrame:
 
     The time_* columns are plain wall-clock seconds and are NOT rescaled by c_el anywhere:
     how long a solve takes is a property of the solver, not of the units its answer is
-    reported in.
+    reported in. Likewise milp_num_lps (the number of branch-and-bound LP relaxations
+    Gurobi explored to solve the MILP) is a property of that solve, not of c_el.
     """
     is_2d = "gas_price_MWh" in points.columns
     opex_kind = "absolute OPEX [€]" if is_2d else "specific OPEX [€/(€/kWh)]"
@@ -155,15 +161,20 @@ def solve_all(points: pd.DataFrame) -> pd.DataFrame:
         if is_2d:
             c_g = row["gas_price_MWh"] / 1000.0
             c_el = row["electricity_price_MWh"] / 1000.0
+            ratio = c_g / c_el
         else:
             c_el = C_EL_REF
             c_g = row["ratio"] * c_el
+            ratio = row["ratio"]
 
-        print(f"  [{i + 1}/{len(points)}] c_g={c_g:.5f} €/kWh  c_el={c_el:.5f} €/kWh  ({opex_kind})")
-        opex_milp, t_milp = _timed(
-            solve_milp, Q_D, P_D, c_g, c_el,
+        print(f"  [{i + 1}/{len(points)}] c_g={c_g:.5f} €/kWh  c_el={c_el:.5f} €/kWh  r={ratio:.5f}  ({opex_kind})")
+        milp_start = perf_counter()
+        opex_milp, dispatch_milp = solve_milp(
+            Q_D, P_D, c_g, c_el,
             mip_gap=MIP_GAP, strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
         )
+        t_milp = perf_counter() - milp_start
+        milp_num_lps = dispatch_milp.attrs.get("milp_num_lps")
         opex_lower, t_lower = _timed(
             solve_lp_lower, Q_D, P_D, c_g, c_el,
             strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION
@@ -186,10 +197,11 @@ def solve_all(points: pd.DataFrame) -> pd.DataFrame:
             "time_lp_lower": t_lower,
             "time_lp_upper": t_upper,
             "time_lp_approx": t_approx,
+            MILP_NUM_LPS_COLUMN: milp_num_lps,
         })
         print(f"    MILP={opex_milp:,.2f}  LP_lower={opex_lower:,.2f}  "
               f"LP_upper={opex_upper:,.2f}  LP_approx={opex_approx:,.2f}")
         print(f"    times [s]: MILP={t_milp:.3f}  LP_lower={t_lower:.3f}  "
-              f"LP_upper={t_upper:.3f}  LP_approx={t_approx:.3f}")
+              f"LP_upper={t_upper:.3f}  LP_approx={t_approx:.3f}  |  MILP LPs solved: {milp_num_lps}")
 
     return pd.concat([points.reset_index(drop=True), pd.DataFrame(rows)], axis=1)

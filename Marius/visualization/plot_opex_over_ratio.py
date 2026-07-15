@@ -24,6 +24,7 @@ curves (MILP, LP lower, LP upper min, LP approx) within that x-range.
 import sys
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -123,6 +124,28 @@ if len(_upper_violations):
     for _i in _upper_violations:
         rel = (opex_milp_values[_i] - opex_lp_upper_values[_i]) / opex_milp_values[_i]
         print(f"  r={price_ratios[_i]:.4f}  LP_upper={opex_lp_upper_values[_i]:,.2f}  MILP={opex_milp_values[_i]:,.2f}  diff={opex_lp_upper_values[_i]-opex_milp_values[_i]:+,.2f}  ({rel:.2%})")
+
+# LP^U - LP^L spread relative to MILP, printed to console.
+_spread_pct = (opex_lp_upper_values[_fin] - opex_lp_lower_values[_fin]) / opex_milp_values[_fin] * 100
+print(f"\nMax LP^U-LP^L spread: {_spread_pct.max():.2f}% of MILP")
+print(f"Mean LP^U-LP^L spread: {_spread_pct.mean():.2f}% of MILP")
+
+# 1D_angle surrogate max deviation from ground truth, on this same ratio sweep -- the
+# already-trained models Marius/surrogate_models/run_full_pipeline.py fits on these exact
+# points (mode="1D_angle"), no re-training here.
+_MODELS_DIR = ROOT / "Marius" / "surrogate_models" / "models" / "1D_angle"
+_ratio_df = pd.DataFrame({"ratio": price_ratios})
+_ground_truth_of = {
+    "opex_milp": opex_milp_values,
+    "opex_lp_lower": opex_lp_lower_values,
+    "opex_lp_upper": opex_lp_upper_values,
+    "opex_lp_approx": opex_lp_approx_mean_values,
+}
+print("\n1D_angle surrogate max deviation from ground truth (on this ratio sweep):")
+for _col, _truth in _ground_truth_of.items():
+    _model = joblib.load(_MODELS_DIR / f"surrogate_{_col}.joblib")
+    _pred = _model.predict(_ratio_df)
+    print(f"  {_col}: max deviation = {np.max(np.abs(_pred - _truth)):.4f}")
 
 
 def _plot_lp_upper(axis, ms: float = MS) -> None:
