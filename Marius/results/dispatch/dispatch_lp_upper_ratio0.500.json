@@ -1,0 +1,9 @@
+{
+  "formulation": "lp_upper",
+  "ratio": 0.5,
+  "c_g": 0.5,
+  "c_el": 1.0,
+  "opex": 110739.85223645758,
+  "mode": "min",
+  "strict_demand_satisfaction": true
+}

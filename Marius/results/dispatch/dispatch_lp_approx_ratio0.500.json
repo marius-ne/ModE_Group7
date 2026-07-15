@@ -1,0 +1,9 @@
+{
+  "formulation": "lp_approx",
+  "ratio": 0.5,
+  "c_g": 0.5,
+  "c_el": 1.0,
+  "opex": 110007.01874444267,
+  "mode": "mean_efficiency",
+  "strict_demand_satisfaction": true
+}

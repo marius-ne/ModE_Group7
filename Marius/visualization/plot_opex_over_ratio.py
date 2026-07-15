@@ -1,99 +1,100 @@
+"""OPEX vs. price ratio for all four formulations, and how tightly the LP bounds bracket the
+MILP.
+
+MILP, LP lower, LP upper (mode="min") and LP approx (mode="mean_efficiency") are read straight
+from the 1D_angle training set that Marius/surrogate_models/run_full_pipeline.py already
+solved (the 40 angle-sampled ratios the 1D_angle surrogate is fitted on), not re-solved here.
+In 1D mode that training set's opex_* columns are specific OPEX (OPEX / c_el, with c_el pinned
+to _evaluation_common.C_EL_REF = 1.0), which is what the y-axis already shows.
+
+LP upper's two heuristics (boilers_on, chp_on) are the one thing the training set does not
+carry -- it only keeps the cheaper of the two (mode="min") -- so those are solved here
+separately, on the same ratios, and cached to opex_lp_upper_modes_angle_40.csv.
+
+Two separate figures, each its own file:
+  opex_vs_price_ratio_linear.png/.pdf   linear axes.
+  opex_vs_price_ratio_log.png/.pdf      log-log axes, with the mean/worst LP-bound gap noted.
+Each carries two insets: a low-r zoom (r up to 0.1) and a zoom on the r in [0.8, 1.1]
+transition region around the CHP/boiler break-even -- sized to fully frame the four main
+curves (MILP, LP lower, LP upper min, LP approx) within that x-range.
+
+    python Marius/visualization/plot_opex_over_ratio.py
+"""
+
 import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-from pathlib import Path
+from matplotlib.ticker import MaxNLocator
 
-sys.path.append("Erdem")
-from src.optimization.core import solve_milp, solve_lp_lower, solve_lp_upper, solve_lp_approximated
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "Erdem"))
+sys.path.insert(0, str(ROOT / "Marius" / "evaluation"))
 
-_demand_df = pd.read_csv(Path("energy_demands.csv"))
-_Q_D = _demand_df["hourly heat demand [kW]"].to_numpy()
-_P_D = _demand_df["hourly electricity demand [kW]"].to_numpy()
+from _evaluation_common import C_EL_REF, P_D, Q_D, STRICT_DEMAND_SATISFACTION
+from src.optimization.core import solve_lp_upper
+from src.visualization.style import apply_style
 
-# Manually rerun tests by setting below to True
-REWRITE = False
+OUT_DIR = ROOT / "Marius" / "visualization"
+RESULTS_DIR = ROOT / "Marius" / "results"
 
-# Toggle expensive or optional solves
-SOLVE_LP_UPPER_ROUNDED = False   # set False to skip LP upper rounded (can be slow/infeasible)
+# The 1D_angle training set: the 40 angle-sampled ratios the 1D_angle surrogate is fitted on,
+# already solved for MILP/LP lower/LP upper(min)/LP approx by run_full_pipeline.py.
+RATIO_SOURCE_CSV = RESULTS_DIR / "evaluation_40_training_samples_1D_angle.csv"
+# LP upper's boilers_on/chp_on breakdown, solved and cached by this script (see _lp_upper_modes).
+LP_UPPER_MODES_CSV = RESULTS_DIR / "opex_lp_upper_modes_angle_40.csv"
+REUSE_EXISTING_MODES = True
 
-strict_demand_satisfaction = True  # Set to True to enforce demand satisfaction in all solves (for testing)
+if not RATIO_SOURCE_CSV.exists():
+    raise FileNotFoundError(
+        f"{RATIO_SOURCE_CSV} not found. It is the 1D_angle training set produced by "
+        f"Marius/surrogate_models/run_full_pipeline.py (N_TRAIN=40)."
+    )
+_df = pd.read_csv(RATIO_SOURCE_CSV)
+print(f"Read {len(_df)} solved training points from {RATIO_SOURCE_CSV}")
 
-# Check if saved file exists
-if REWRITE or not (Path(__file__).parent / ".." / "results" / "opex_vs_price_ratio.csv").exists():
-    # Baseline scaling factor
-    c_el = 1
+price_ratios = _df["ratio"].to_numpy(dtype=float)
+opex_milp_values = _df["opex_milp"].to_numpy(dtype=float)
+opex_lp_lower_values = _df["opex_lp_lower"].to_numpy(dtype=float)
+opex_lp_upper_values = _df["opex_lp_upper"].to_numpy(dtype=float)  # mode="min"
+opex_lp_approx_mean_values = _df["opex_lp_approx"].to_numpy(dtype=float)
 
-    price_ratios = np.logspace(-1, 1, 40)  # from 0.01 to 100
-    c_G_values = c_el * price_ratios
-    opex_milp_values = []
-    opex_lp_lower_values = []
-    opex_lp_upper_bo_values = []
-    opex_lp_upper_chp_values = []
-    opex_lp_upper_rounded_values = []
-    opex_lp_approx_mean_values = []
-    sum_dB_values = []
-    sum_dCHP_values = []
 
-    for c_G in c_G_values:
-        price_ratio = c_G / c_el
-        print(f"c_G={c_G:.4f}  c_el={c_el:.4f}  ratio={price_ratio:.2f}")
+def _lp_upper_modes() -> pd.DataFrame:
+    """LP upper's boilers_on/chp_on solved separately, for the faint context lines around the
+    mode="min" curve -- reused from disk if this exact ratio sweep is already solved."""
+    if REUSE_EXISTING_MODES and LP_UPPER_MODES_CSV.exists():
+        cached = pd.read_csv(LP_UPPER_MODES_CSV)
+        if (len(cached) == len(price_ratios)
+                and np.allclose(cached["ratio"].to_numpy(), price_ratios)):
+            print(f"Reusing LP upper mode breakdown from {LP_UPPER_MODES_CSV}")
+            return cached
+        print(f"Cached {LP_UPPER_MODES_CSV} is for a different ratio sweep -- re-solving.")
 
-        opex_milp, dispatch_milp = solve_milp(_Q_D, _P_D, c_G, c_el, mip_gap=1e-2, strict_demand_satisfaction=strict_demand_satisfaction)
-        print(f"  OPEX (MILP) = {opex_milp:,.2f}")
-        opex_milp_values.append(opex_milp)
-        sum_dB_values.append((dispatch_milp["dB1"] + dispatch_milp["dB2"]).sum())
-        sum_dCHP_values.append((dispatch_milp["dCHP1"] + dispatch_milp["dCHP2"]).sum())
+    print(f"Solving LP upper's boilers_on/chp_on modes for {len(price_ratios)} ratios ...")
+    rows = []
+    for r in price_ratios:
+        c_g = r * C_EL_REF
+        (opex_bo, _), (opex_chp, _) = solve_lp_upper(
+            Q_D, P_D, c_g, C_EL_REF, return_both=True,
+            strict_demand_satisfaction=STRICT_DEMAND_SATISFACTION,
+        )
+        rows.append({"ratio": r, "opex_lp_upper_bo": opex_bo, "opex_lp_upper_chp": opex_chp})
 
-        opex_lp_lower = solve_lp_lower(_Q_D, _P_D, c_G, c_el, strict_demand_satisfaction=strict_demand_satisfaction)[0]
-        print(f"  OPEX (LP lower) = {opex_lp_lower:,.2f}")
-        opex_lp_lower_values.append(opex_lp_lower)
+    df = pd.DataFrame(rows)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_csv(LP_UPPER_MODES_CSV, index=False)
+    print(f"Saved LP upper mode breakdown to {LP_UPPER_MODES_CSV}")
+    return df
 
-        (opex_bo, _), (opex_chp, _) = solve_lp_upper(_Q_D, _P_D, c_G, c_el, return_both=True, strict_demand_satisfaction=strict_demand_satisfaction)
-        print(f"  OPEX (LP upper boilers_on) = {opex_bo:,.2f}")
-        opex_lp_upper_bo_values.append(opex_bo)
-        print(f"  OPEX (LP upper chp_on) = {opex_chp:,.2f}")
-        opex_lp_upper_chp_values.append(opex_chp)
 
-        if SOLVE_LP_UPPER_ROUNDED:
-            opex_rounded = solve_lp_upper(_Q_D, _P_D, c_G, c_el, mode="rounded", strict_demand_satisfaction=strict_demand_satisfaction)[0]
-        else:
-            opex_rounded = float("nan")
-        print(f"  OPEX (LP upper rounded) = {opex_rounded:,.2f}")
-        opex_lp_upper_rounded_values.append(opex_rounded)
+_modes_df = _lp_upper_modes()
+opex_lp_upper_bo_values = _modes_df["opex_lp_upper_bo"].to_numpy(dtype=float)
+opex_lp_upper_chp_values = _modes_df["opex_lp_upper_chp"].to_numpy(dtype=float)
 
-        opex_approx_mean = solve_lp_approximated(_Q_D, _P_D, c_G, c_el, mode="mean_efficiency", strict_demand_satisfaction=strict_demand_satisfaction)[0]
-        print(f"  OPEX (LP approx mean_eff) = {opex_approx_mean:,.2f}\n")
-        opex_lp_approx_mean_values.append(opex_approx_mean)
-
-    # Save data to CSV for further analysis
-    df = pd.DataFrame({
-        "price_ratio": price_ratios,
-        "opex_milp": opex_milp_values,
-        "opex_lp_lower": opex_lp_lower_values,
-        "opex_lp_upper_bo": opex_lp_upper_bo_values,
-        "opex_lp_upper_chp": opex_lp_upper_chp_values,
-        "opex_lp_upper_rounded": opex_lp_upper_rounded_values,
-        "opex_lp_approx_mean": opex_lp_approx_mean_values,
-        "sum_dB": sum_dB_values,
-        "sum_dCHP": sum_dCHP_values,
-    })
-    df.to_csv("Marius/results/opex_vs_price_ratio.csv", index=False)
-
-else:
-    df = pd.read_csv(Path(__file__).parent / ".." / "results" / "opex_vs_price_ratio.csv")
-    price_ratios = df["price_ratio"].values
-    opex_milp_values = df["opex_milp"].values
-    opex_lp_lower_values = df["opex_lp_lower"].values
-    opex_lp_upper_bo_values = df["opex_lp_upper_bo"].values
-    opex_lp_upper_chp_values = df["opex_lp_upper_chp"].values
-    opex_lp_upper_rounded_values = df["opex_lp_upper_rounded"].values
-    opex_lp_approx_mean_values = df["opex_lp_approx_mean"].values
-    sum_dB_values = df["sum_dB"].values
-    sum_dCHP_values = df["sum_dCHP"].values
-
-LEGEND_KW = dict(framealpha=0.85, edgecolor="gray", fontsize=11)
-OPEX_YLABEL = r"OPEX $\left[\dfrac{€_{\mathrm{OPEX}}}{€\,/\,\mathrm{kWh}}\right]$"
+OPEX_YLABEL = r"$\widetilde{\mathrm{OPEX}}$ $\left[\dfrac{€_{\mathrm{OPEX}}}{€\,/\,\mathrm{kWh}}\right]$"
 MS = 2.5   # uniform marker size
 
 # Palette (ColorBrewer-inspired, perceptually distinct)
@@ -102,19 +103,7 @@ C_LP_LOWER    = "#4DAC26"   # medium green
 C_LP_UB_BO    = "#F4A582"   # light salmon  (faint boilers_on)
 C_LP_UB_CHP   = "#FDCC8A"   # light amber   (faint chp_on)
 C_LP_UB_MIN   = "#D6604D"   # muted red     (best upper)
-C_LP_ROUNDED  = "#9970AB"   # muted purple
 C_LP_APPROX   = "#35978F"   # teal
-C_DB          = "#1B7837"   # dark green    (delta sums subplot)
-C_DCHP        = "#E08214"   # warm orange   (delta sums subplot)
-
-price_ratios                = np.asarray(price_ratios,                dtype=float)
-opex_milp_values            = np.asarray(opex_milp_values,            dtype=float)
-opex_lp_lower_values        = np.asarray(opex_lp_lower_values,        dtype=float)
-opex_lp_upper_bo_values     = np.asarray(opex_lp_upper_bo_values,     dtype=float)
-opex_lp_upper_chp_values    = np.asarray(opex_lp_upper_chp_values,    dtype=float)
-opex_lp_upper_rounded_values= np.asarray(opex_lp_upper_rounded_values,dtype=float)
-opex_lp_approx_mean_values  = np.asarray(opex_lp_approx_mean_values,  dtype=float)
-opex_lp_upper_min_values    = np.fmin(opex_lp_upper_bo_values, opex_lp_upper_chp_values)
 
 # Sanity checks: bounds must bracket the MILP solution at every point.
 # The MILP is solved with mip_gap=1e-2, so its returned objective can be up to 1% above
@@ -122,9 +111,9 @@ opex_lp_upper_min_values    = np.fmin(opex_lp_upper_bo_values, opex_lp_upper_chp
 # is normal within that gap. Only flag if LP_upper < MILP_returned * (1 - MIP_GAP),
 # which would place LP_upper below the solver's own lower bound — a genuine error.
 _MIP_GAP = 1e-2
-_fin = np.isfinite(opex_milp_values) & np.isfinite(opex_lp_lower_values) & np.isfinite(opex_lp_upper_min_values)
+_fin = np.isfinite(opex_milp_values) & np.isfinite(opex_lp_lower_values) & np.isfinite(opex_lp_upper_values)
 _lower_violations = np.where(_fin & (opex_lp_lower_values > opex_milp_values * (1 + 1e-6)))[0]
-_upper_violations = np.where(_fin & (opex_lp_upper_min_values < opex_milp_values * (1 - _MIP_GAP)))[0]
+_upper_violations = np.where(_fin & (opex_lp_upper_values < opex_milp_values * (1 - _MIP_GAP)))[0]
 if len(_lower_violations):
     print(f"ERROR: LP lower bound exceeds MILP at {len(_lower_violations)} point(s):")
     for _i in _lower_violations:
@@ -132,182 +121,150 @@ if len(_lower_violations):
 if len(_upper_violations):
     print(f"ERROR: LP upper bound (min of both) is below MILP by more than MIP gap ({_MIP_GAP:.0%}) at {len(_upper_violations)} point(s):")
     for _i in _upper_violations:
-        rel = (opex_milp_values[_i] - opex_lp_upper_min_values[_i]) / opex_milp_values[_i]
-        print(f"  r={price_ratios[_i]:.4f}  LP_upper={opex_lp_upper_min_values[_i]:,.2f}  MILP={opex_milp_values[_i]:,.2f}  diff={opex_lp_upper_min_values[_i]-opex_milp_values[_i]:+,.2f}  ({rel:.2%})")
+        rel = (opex_milp_values[_i] - opex_lp_upper_values[_i]) / opex_milp_values[_i]
+        print(f"  r={price_ratios[_i]:.4f}  LP_upper={opex_lp_upper_values[_i]:,.2f}  MILP={opex_milp_values[_i]:,.2f}  diff={opex_lp_upper_values[_i]-opex_milp_values[_i]:+,.2f}  ({rel:.2%})")
 
 
-def _plot_lp_upper(axis):
+def _plot_lp_upper(axis, ms: float = MS) -> None:
     """Faint individual modes + bold best-of-two line."""
     axis.plot(price_ratios, opex_lp_upper_bo_values,
               color=C_LP_UB_BO,  linewidth=0.9, alpha=0.6, linestyle=(0, (5, 3)),
-              label="LP Upper (boilers ON)")
+              label=r"$\mathrm{LP^U_B}$")
     axis.plot(price_ratios, opex_lp_upper_chp_values,
               color=C_LP_UB_CHP, linewidth=0.9, alpha=0.6, linestyle=(0, (2, 2)),
-              label="LP Upper (CHPs ON)")
-    axis.plot(price_ratios, opex_lp_upper_min_values,
-              color=C_LP_UB_MIN, linewidth=1.5, linestyle="-", marker="^", markersize=MS,
-              label="LP Upper (min of both)")
+              label=r"$\mathrm{LP^U_{CHP}}$")
+    axis.plot(price_ratios, opex_lp_upper_values,
+              color=C_LP_UB_MIN, linewidth=1.5, linestyle="-", marker="^", markersize=ms,
+              label=r"$\mathrm{LP^U}$")
 
 
-# Make linear and log plots of OPEX vs price ratio
-fig, ax = plt.subplots(3, 1, figsize=(9, 11))
-ax[2].sharex(ax[1])
+def _plot_main_series(axis, ms: float = MS) -> None:
+    """The four headline curves (MILP, LP lower, LP upper min, LP approx) plus the two faint
+    LP-upper heuristics, all sharing one marker-size scale so a main panel and its insets look
+    like the same plot at different zoom."""
+    axis.plot(price_ratios, opex_milp_values, color=C_MILP, linewidth=1.8, linestyle="-",
+              marker="o", markersize=ms, label="MILP")
+    axis.plot(price_ratios, opex_lp_lower_values, color=C_LP_LOWER, linewidth=1.5,
+              linestyle=(0, (4, 2)), marker="s", markersize=ms, label=r"$\mathrm{LP^L}$")
+    _plot_lp_upper(axis, ms=ms)
+    axis.plot(price_ratios, opex_lp_approx_mean_values, color=C_LP_APPROX, linewidth=1.5,
+              linestyle=(0, (3, 1, 1, 1)), marker="*", markersize=ms + 1,
+              label=r"$\mathrm{LP^A}$")
 
-# --- Linear scale ---
-ax[0].plot(price_ratios, opex_milp_values,           color=C_MILP,      linewidth=1.8, linestyle="-",      marker="o", markersize=MS, label="MILP")
-ax[0].plot(price_ratios, opex_lp_lower_values,       color=C_LP_LOWER,  linewidth=1.5, linestyle=(0,(4,2)),marker="s", markersize=MS, label="LP Lower")
-_plot_lp_upper(ax[0])
-if SOLVE_LP_UPPER_ROUNDED:
-    ax[0].plot(price_ratios, opex_lp_upper_rounded_values, color=C_LP_ROUNDED, linewidth=1.5, linestyle=(0,(1,2)), marker="D", markersize=MS, label="LP Upper (rounded)")
-ax[0].plot(price_ratios, opex_lp_approx_mean_values, color=C_LP_APPROX, linewidth=1.5, linestyle=(0,(3,1,1,1)), marker="*", markersize=MS+1, label="LP Approx (mean eff.)")
-ax[0].set_ylabel(OPEX_YLABEL, fontsize=12)
-ax[0].set_title("OPEX vs Price Ratio — linear scale")
-ax[0].legend(**LEGEND_KW)
-ax[0].grid(True, which="both", ls="--", alpha=0.5)
 
-# --- Log scale ---
-ax[1].plot(price_ratios, opex_milp_values,           color=C_MILP,      linewidth=1.8, linestyle="-",      marker="o", markersize=MS, label="MILP")
-ax[1].plot(price_ratios, opex_lp_lower_values,       color=C_LP_LOWER,  linewidth=1.5, linestyle=(0,(4,2)),marker="s", markersize=MS, label="LP Lower")
-_plot_lp_upper(ax[1])
-if SOLVE_LP_UPPER_ROUNDED:
-    ax[1].plot(price_ratios, opex_lp_upper_rounded_values, color=C_LP_ROUNDED, linewidth=1.5, linestyle=(0,(1,2)), marker="D", markersize=MS, label="LP Upper (rounded)")
-ax[1].plot(price_ratios, opex_lp_approx_mean_values, color=C_LP_APPROX, linewidth=1.5, linestyle=(0,(3,1,1,1)), marker="*", markersize=MS+1, label="LP Approx (mean eff.)")
-ax[1].set_xscale("log")
-ax[1].set_yscale("log")
-ax[1].set_ylabel(OPEX_YLABEL, fontsize=12)
+# The four headline curves an inset's y-limits are sized to -- not the two faint LP-upper
+# heuristics, which are shown for context but are not what "the plot" is about.
+_MAIN_SERIES = [opex_milp_values, opex_lp_lower_values, opex_lp_upper_values,
+                opex_lp_approx_mean_values]
 
-_gap_mask   = (np.isfinite(opex_milp_values) & np.isfinite(opex_lp_lower_values)
-               & np.isfinite(opex_lp_upper_min_values) & (opex_milp_values > 0))
-_r_masked   = price_ratios[_gap_mask]
-_milp_m     = opex_milp_values[_gap_mask]
-_lower_gaps = (_milp_m - opex_lp_lower_values[_gap_mask]) / _milp_m
-_upper_gaps = (opex_lp_upper_min_values[_gap_mask] - _milp_m) / _milp_m
-_wi_lo, _wi_up = np.argmax(_lower_gaps), np.argmax(_upper_gaps)
-_gap_subtitle = (
-    f"mean $\\Delta$: LP lower: {_lower_gaps.mean():.2%}  |  LP upper: {_upper_gaps.mean():.2%}"
-    f"     —     "
-    f"worst $\\Delta$: LP lower: {_lower_gaps[_wi_lo]:.2%} at $r={_r_masked[_wi_lo]:.3f}$"
-    f"  |  LP upper: {_upper_gaps[_wi_up]:.2%} at $r={_r_masked[_wi_up]:.3f}$"
-)
-ax[1].set_title("OPEX vs Price Ratio — log scale", fontsize=11, pad=13)
-ax[1].text(0.5, 1.0, _gap_subtitle, transform=ax[1].transAxes,
-           ha="center", va="bottom", fontsize=8.5)
-ax[1].legend(**LEGEND_KW)
-ax[1].grid(True, which="both", ls="--", alpha=0.5)
 
-# Inset: lower ~10 % of the price-ratio x-axis (leftmost decade tenth)
-_INS_X_LO = price_ratios[0]
-_INS_X_HI = price_ratios[0] * (price_ratios[-1] / price_ratios[0]) ** 0.10  # 10 % of log span
-_ins_mask  = price_ratios <= _INS_X_HI
-_ins_series_bounds = [
-    opex_lp_lower_values,       # lower bound
-    opex_lp_upper_min_values,   # upper bound (best of bo/chp)
-]
-_ins_valid  = np.concatenate([s[_ins_mask] for s in _ins_series_bounds])
-_ins_valid  = _ins_valid[np.isfinite(_ins_valid)]
-_INS_Y_LO   = _ins_valid.min() * 0.96
-_INS_Y_HI   = _ins_valid.max() * 1.04
+def _inset_ylim(xlim: tuple[float, float], log: bool, extra_top: float = 0.0) -> tuple[float, float]:
+    """y-limits spanning all four headline curves within xlim, so an inset never crops one of
+    them out -- the failure mode of sizing the range from only some of the series.
 
-axins1 = ax[1].inset_axes([0.56, 0.05, 0.41, 0.35])   # lower-right, ~90 % of former size
-axins1.plot(price_ratios, opex_milp_values,           color=C_MILP,     linewidth=1.8, linestyle="-",           marker="o", markersize=MS+0.5)
-axins1.plot(price_ratios, opex_lp_lower_values,       color=C_LP_LOWER, linewidth=1.5, linestyle=(0,(4,2)),     marker="s", markersize=MS+0.5)
-axins1.plot(price_ratios, opex_lp_upper_bo_values,    color=C_LP_UB_BO, linewidth=0.9, linestyle=(0,(5,3)),     alpha=0.6)
-axins1.plot(price_ratios, opex_lp_upper_chp_values,   color=C_LP_UB_CHP,linewidth=0.9, linestyle=(0,(2,2)),     alpha=0.6)
-axins1.plot(price_ratios, opex_lp_upper_min_values,   color=C_LP_UB_MIN,linewidth=1.5, linestyle="-",           marker="^", markersize=MS+0.5)
-axins1.plot(price_ratios, opex_lp_approx_mean_values, color=C_LP_APPROX,linewidth=1.5, linestyle=(0,(3,1,1,1)), marker="*", markersize=MS+1.5)
-if SOLVE_LP_UPPER_ROUNDED:
-    axins1.plot(price_ratios, opex_lp_upper_rounded_values, color=C_LP_ROUNDED, linewidth=1.5, linestyle=(0,(1,2)), marker="D", markersize=MS+0.5)
-axins1.set_xscale("log")
-axins1.set_yscale("log")
-axins1.set_xlim(_INS_X_LO, _INS_X_HI)
-axins1.set_ylim(_INS_Y_LO, _INS_Y_HI)
-axins1.tick_params(axis="both", which="both", labelsize=5, pad=1)
-axins1.grid(True, which="both", ls="--", alpha=0.5)
-axins1.set_title(f"low-$r$ zoom ($r≤{_INS_X_HI:.2f}$)", fontsize=7, pad=2)
-ax[1].indicate_inset_zoom(axins1, edgecolor="0.4")
+    extra_top: additional headroom as a fraction of the span, on top of the usual padding --
+    for insets that also show the faint LP-upper heuristics (bo/chp), which sit above the
+    min-of-both line the range is otherwise sized to and would get cut off without it.
+    """
+    mask = (price_ratios >= xlim[0]) & (price_ratios <= xlim[1])
+    vals = np.concatenate([s[mask] for s in _MAIN_SERIES])
+    vals = vals[np.isfinite(vals)]
+    lo, hi = vals.min(), vals.max()
+    if log:
+        return lo * 0.96, hi * (1.04 + extra_top)
+    pad = 0.04 * (hi - lo)
+    return lo - 2*pad, hi + pad + extra_top * (hi - lo)
 
-# Inset: r ∈ [0.8, 1.1] — transition region around r=1
-_INS2_X_LO, _INS2_X_HI = 0.8, 1.1
-_ins2_inner = np.where((price_ratios >= _INS2_X_LO) & (price_ratios <= _INS2_X_HI))[0]
-# expand by one index on each side so flanking interpolated line segments are captured
-_i_lo = max(0, _ins2_inner[0] - 1)
-_i_hi = min(len(price_ratios) - 1, _ins2_inner[-1] + 1)
-_ins2_mask = np.zeros(len(price_ratios), dtype=bool)
-_ins2_mask[_i_lo:_i_hi + 1] = True
-_ins2_strict = (price_ratios >= _INS2_X_LO) & (price_ratios <= _INS2_X_HI)
-_ins2_series = [opex_milp_values, opex_lp_lower_values, opex_lp_upper_bo_values,
-                opex_lp_upper_chp_values, opex_lp_upper_min_values, opex_lp_approx_mean_values]
-_ins2_exp   = np.concatenate([s[_ins2_mask]   for s in _ins2_series])
-_ins2_inner = np.concatenate([s[_ins2_strict] for s in _ins2_series])
-_ins2_exp   = _ins2_exp[np.isfinite(_ins2_exp)]
-_ins2_inner = _ins2_inner[np.isfinite(_ins2_inner)]
-_INS2_Y_LO  = _ins2_exp.min()   * 0.996   # expanded: captures left-edge interpolation dip
-_INS2_Y_HI  = _ins2_inner.max() * 1.004   # strict: avoids right-flank inflation
 
-axins2 = ax[1].inset_axes([0.3, 0.60, 0.3, 0.33])   # upper area, right of legend, up to ~60 % x
-axins2.plot(price_ratios, opex_milp_values,           color=C_MILP,     linewidth=1.8, linestyle="-",           marker="o", markersize=MS+0.5)
-axins2.plot(price_ratios, opex_lp_lower_values,       color=C_LP_LOWER, linewidth=1.5, linestyle=(0,(4,2)),     marker="s", markersize=MS+0.5)
-axins2.plot(price_ratios, opex_lp_upper_bo_values,    color=C_LP_UB_BO, linewidth=0.9, linestyle=(0,(5,3)),     alpha=0.6)
-axins2.plot(price_ratios, opex_lp_upper_chp_values,   color=C_LP_UB_CHP,linewidth=0.9, linestyle=(0,(2,2)),     alpha=0.6)
-axins2.plot(price_ratios, opex_lp_upper_min_values,   color=C_LP_UB_MIN,linewidth=1.5, linestyle="-",           marker="^", markersize=MS+0.5)
-axins2.plot(price_ratios, opex_lp_approx_mean_values, color=C_LP_APPROX,linewidth=1.5, linestyle=(0,(3,1,1,1)), marker="*", markersize=MS+1.5)
-if SOLVE_LP_UPPER_ROUNDED:
-    axins2.plot(price_ratios, opex_lp_upper_rounded_values, color=C_LP_ROUNDED, linewidth=1.5, linestyle=(0,(1,2)), marker="D", markersize=MS+0.5)
-axins2.set_xscale("log")
-axins2.set_yscale("log")
-axins2.set_xlim(_INS2_X_LO, _INS2_X_HI)
-axins2.set_ylim(_INS2_Y_LO, _INS2_Y_HI)
-axins2.tick_params(axis="both", which="both", labelsize=5, pad=1)
-axins2.grid(True, which="both", ls="--", alpha=0.5)
-axins2.set_title(r"zoom $r\in[0.8,\,1.1]$", fontsize=7, pad=2)
-ax[1].indicate_inset_zoom(axins2, edgecolor="0.4")
+def _add_inset(ax, rect: list[float], xlim: tuple[float, float], title: str, log: bool,
+                extra_top: float = 0.0):
+    axins = ax.inset_axes(rect)
+    _plot_main_series(axins, ms=MS + 0.5)
+    if log:
+        axins.set_xscale("log")
+        axins.set_yscale("log")
+    else:
+        # The log insets' ticks are already sparse (log-spaced); the linear ones default to as
+        # many major ticks as fit, which is cluttered at this inset size.
+        axins.xaxis.set_major_locator(MaxNLocator(nbins=4))
+        axins.yaxis.set_major_locator(MaxNLocator(nbins=4))
+    axins.set_xlim(*xlim)
+    axins.set_ylim(*_inset_ylim(xlim, log=log, extra_top=extra_top))
+    axins.tick_params(axis="both", which="both", labelsize=5, pad=1)
+    axins.set_title(title, fontsize=7, pad=8)
+    ax.indicate_inset_zoom(axins, edgecolor="0.4")
+    return axins
 
-# --- Delta sums ---
-ax[2].plot(price_ratios, sum_dB_values,   color=C_DB,   linewidth=1.5, marker="^", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{B},i,k}$")
-ax[2].plot(price_ratios, sum_dCHP_values, color=C_DCHP, linewidth=1.5, marker="v", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{CHP},i,k}$")
-ax[2].set_xscale("log")
-ax[2].set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$", fontsize=12)
-ax[2].set_ylabel(r"$\sum_{i,k} \delta_{i,k}\;[-]$", fontsize=12)
-ax[2].set_title(r"MILP Commitment: $\sum_{i,k} \delta_{\mathrm{B},i,k}$ and $\sum_{i,k} \delta_{\mathrm{CHP},i,k}$ vs Price Ratio")
-ax[2].legend(**LEGEND_KW)
-ax[2].grid(True, which="both", ls="--")
 
-plt.tight_layout()
+# Low-r inset: fixed absolute window up to r=0.2, wide enough to always cover several sampled
+# ratios so all four headline curves show as visible line segments rather than lone dots.
+# The lower limit is padded below the first sample so it doesn't sit exactly on the y-axis.
+INS_X_HI = 0.3
+INS_X_LO = price_ratios[0] - 0.1 * (INS_X_HI - price_ratios[0])
+INS_TITLE = f"low-$r$ zoom ($r≤{INS_X_HI:.2f}$)"
 
-# Save the figure
-fig.savefig("Marius/visualization/opex_vs_price_ratio.png", dpi=300)
-plt.close()
+# Transition-region inset: r in [0.8, 1.1], around the CHP/boiler break-even at r=1.
+INS2_X_LO, INS2_X_HI = 0.8, 1.1
+INS2_TITLE = r"zoom $r\in[0.8,\,1.1]$"
 
-# --- Standalone delta-sums plot ---
-fig_ds, ax_ds = plt.subplots(figsize=(9, 4))
-ax_ds.plot(price_ratios, sum_dB_values,   color=C_DB,   linewidth=1.5, marker="^", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{B},i,k}$")
-ax_ds.plot(price_ratios, sum_dCHP_values, color=C_DCHP, linewidth=1.5, marker="v", markersize=MS, label=r"$\sum_{i,k} \delta_{\mathrm{CHP},i,k}$")
-ax_ds.set_xscale("log")
-ax_ds.set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$", fontsize=14)
-ax_ds.set_ylabel(r"$\sum_{i,k} \delta_{i,k}\;[-]$", fontsize=14)
-# Set the title to be a bit higher above the plot
-ax_ds.set_title(r"MILP Commitment: $\sum_{i,k} \delta_{\mathrm{B},i,k}$ and $\sum_{i,k} \delta_{\mathrm{CHP},i,k}$ vs Price Ratio", fontsize=14, pad=18)
-ax_ds.legend(**LEGEND_KW)
-ax_ds.xaxis.set_tick_params(labelsize=12)
-ax_ds.grid(True, which="both", ls="--", alpha=0.5)
 
-ax_ds.axvline(0.7, color="gray", linewidth=1.2, linestyle="--")
-ax_ds.axvline(1.0, color="gray", linewidth=1.2, linestyle="--")
-_y_lo, _y_hi = ax_ds.get_ylim()
-_y_mid        = 1.1 * (_y_lo + _y_hi) / 2
-_x_chp_mid    = np.sqrt(price_ratios[0] * 0.7)   # geometric centre of CHP region
-_x_be_mid     = np.sqrt(0.7 * 1.0)               # geometric centre of break-even region
-_x_boiler_mid = np.sqrt(1.0 * price_ratios[-1])  # geometric centre of boiler region
-ax_ds.text(_x_chp_mid,    _y_mid, "CHP-mode",    ha="center", va="center", fontsize=14, color="gray")
-ax_ds.text(_x_boiler_mid, _y_mid, "Boiler-mode", ha="center", va="center", fontsize=14, color="gray")
-ax_ds.annotate(
-    "Break-even",
-    xy=(_x_be_mid, _y_hi * 0.78),
-    xytext=(np.sqrt(_x_boiler_mid), _y_hi * 0.78),
-    ha="center", va="center", fontsize=14, color="gray",
-    arrowprops=dict(arrowstyle="->", color="gray", lw=1.0),
-)
+def plot_linear() -> None:
+    apply_style(width_cm=16, aspect=2.2, grid=True, strict=True)
+    fig, ax = plt.subplots(constrained_layout=True)
 
-fig_ds.tight_layout()
-fig_ds.savefig("Marius/visualization/delta_sums_vs_price_ratio.png", dpi=300)
-plt.close(fig_ds)
+    _plot_main_series(ax)
+    ax.set_xlabel(r"Price ratio $c_{\mathrm{gas}}\,/\,c_{\mathrm{el}}$ $[-]$")
+    ax.set_ylabel(OPEX_YLABEL)
+    ax.legend()
+    ax.grid(alpha=0.25, linewidth=0.4)
+
+    _add_inset(ax, [0.65, 0.07, 0.25, 0.3], (INS_X_LO, INS_X_HI), INS_TITLE, log=False,
+               extra_top=0.25)
+    _add_inset(ax, [0.25, 0.58, 0.25, 0.3], (INS2_X_LO, INS2_X_HI), INS2_TITLE, log=False)
+
+    fig.savefig(OUT_DIR / "opex_vs_price_ratio_linear.png")
+    fig.savefig(OUT_DIR / "opex_vs_price_ratio_linear.pdf")
+    plt.close(fig)
+    print(f"Saved {OUT_DIR / 'opex_vs_price_ratio_linear.png'} (+ .pdf)")
+
+
+def plot_log() -> None:
+    apply_style(width_cm=16, aspect=2.2, grid=True, strict=True)
+    fig, ax = plt.subplots(constrained_layout=True)
+
+    _plot_main_series(ax)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel(r"Price ratio $c_{\mathrm{gas}}\,/\,c_{\mathrm{el}}$ $[-]$")
+    ax.set_ylabel(OPEX_YLABEL)
+
+    gap_mask   = (np.isfinite(opex_milp_values) & np.isfinite(opex_lp_lower_values)
+                  & np.isfinite(opex_lp_upper_values) & (opex_milp_values > 0))
+    r_masked   = price_ratios[gap_mask]
+    milp_m     = opex_milp_values[gap_mask]
+    lower_gaps = (milp_m - opex_lp_lower_values[gap_mask]) / milp_m
+    upper_gaps = (opex_lp_upper_values[gap_mask] - milp_m) / milp_m
+    wi_lo, wi_up = np.argmax(lower_gaps), np.argmax(upper_gaps)
+    # two lines: on one line this does not fit across the axes at the style's figure width
+    gap_subtitle = (
+        f"mean $\\Delta$: LP lower: {lower_gaps.mean():.2%}  |  LP upper: {upper_gaps.mean():.2%}\n"
+        f"worst $\\Delta$: LP lower: {lower_gaps[wi_lo]:.2%} at $r={r_masked[wi_lo]:.3f}$"
+        f"  |  LP upper: {upper_gaps[wi_up]:.2%} at $r={r_masked[wi_up]:.3f}$"
+    )
+    ax.text(0.5, 1.0, gap_subtitle, transform=ax.transAxes,
+            ha="center", va="bottom", fontsize=7, linespacing=1.4)
+    ax.legend()
+    ax.grid(alpha=0.25, linewidth=0.4)
+
+    _add_inset(ax, [0.56, 0.05, 0.41, 0.35], (INS_X_LO, INS_X_HI), INS_TITLE, log=True)
+    _add_inset(ax, [0.3, 0.60, 0.3, 0.33], (INS2_X_LO, INS2_X_HI), INS2_TITLE, log=True)
+
+    fig.savefig(OUT_DIR / "opex_vs_price_ratio_log.png")
+    fig.savefig(OUT_DIR / "opex_vs_price_ratio_log.pdf")
+    plt.close(fig)
+    print(f"Saved {OUT_DIR / 'opex_vs_price_ratio_log.png'} (+ .pdf)")
+
+
+if __name__ == "__main__":
+    plot_linear()
+    plot_log()

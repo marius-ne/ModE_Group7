@@ -8,26 +8,33 @@ larger region than the original rectangle."""
 
 import sys
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Polygon, FancyArrowPatch
+from matplotlib.patches import Rectangle, Polygon, FancyArrowPatch, Arc
+from matplotlib.ticker import MaxNLocator, AutoMinorLocator
+from matplotlib.patheffects import withStroke
 from pathlib import Path
 
 sys.path.append("Erdem")
 from src.sampling.core import GAS_MIN, GAS_MAX, ELEC_MIN, ELEC_MAX, create_sample
+from src.visualization.style import apply_style, get_figsize
 
 _BOUND_COLOR = "#888780"
 _BLUE = "#2166AC"
 _CONE_FACE = "#D6604D"
 _CONE_EDGE = "#B2182B"
 _SLOPE_COLOR = "#B2182B"
+_THETA_COLOR = "#E08214"
 
 N_LHS = 40
 LEFT_PAD_FRAC = 0.25    # padding around the rectangle in the left panel's x-axis
-Y_MAX_LEFT = 400.0       # left panel's y-axis extent
-Y_MAX_RIGHT = 600.0      # right panel's y-axis extent
+Y_MAX_LEFT = 430.0       # left panel's y-axis extent
+Y_MAX_RIGHT = 640.0      # right panel's y-axis extent
 
-FIG_WIDTH = 15.0
-GRID_LEFT, GRID_RIGHT, GRID_TOP, GRID_BOTTOM, WSPACE = 0.06, 0.97, 0.88, 0.11, 0.3
+FIG_WIDTH_CM = 22
+# margins in figure fractions: the top leaves a little room above the panel titles, the
+# wspace for the arrow (and its label) between the panels plus the right panel's y-axis labels
+GRID_LEFT, GRID_RIGHT, GRID_TOP, GRID_BOTTOM, WSPACE = 0.07, 0.97, 0.92, 0.19, 0.45
 
 
 def _draw_rectangle(ax, shaded: bool = True, label: str | None = None):
@@ -46,13 +53,28 @@ def _draw_rectangle(ax, shaded: bool = True, label: str | None = None):
     ))
 
 
+def _merge_ticks(auto_ticks, special_ticks, lo: float, hi: float, min_sep_frac: float = 0.05):
+    """Auto ticks unioned with the special (boundary) ticks, dropping any auto tick that falls
+    within min_sep_frac of the axis span from a special one. Without this, a boundary value
+    close to a round auto tick (e.g. GAS_MAX=315 next to an auto tick at 300) produces two
+    labels close enough to overlap."""
+    min_sep = min_sep_frac * (hi - lo)
+    kept_auto = [t for t in auto_ticks if all(abs(t - s) >= min_sep for s in special_ticks)]
+    ticks = sorted(set(kept_auto) | set(special_ticks))
+    return [t for t in ticks if lo <= t <= hi]
+
+
 def _highlight_boundary_ticks(ax, xlim, ylim, x0: float = 0.0):
-    x_ticks = sorted(set(ax.get_xticks()) | {x0, ELEC_MIN, ELEC_MAX})
-    x_ticks = [t for t in x_ticks if xlim[0] <= t <= xlim[1]]
+    x_auto = MaxNLocator(nbins=5).tick_values(*xlim)
+    x_ticks = _merge_ticks(x_auto, {x0, ELEC_MIN, ELEC_MAX}, *xlim)
     ax.set_xticks(x_ticks)
-    y_ticks = sorted(set(ax.get_yticks()) | {x0, GAS_MIN, GAS_MAX})
-    y_ticks = [t for t in y_ticks if ylim[0] <= t <= ylim[1]]
+    y_auto = MaxNLocator(nbins=5).tick_values(*ylim)
+    y_ticks = _merge_ticks(y_auto, {x0, GAS_MIN, GAS_MAX}, *ylim)
     ax.set_yticks(y_ticks)
+    # the irregular special+auto tick spacing confuses the default AutoMinorLocator into
+    # inserting a variable, cluttered number of minor ticks -- pin it to a fixed count
+    ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+    ax.yaxis.set_minor_locator(AutoMinorLocator(2))
     for lbl, val in zip(ax.get_xticklabels(), x_ticks):
         if val in (ELEC_MIN, ELEC_MAX):
             lbl.set_color(_BOUND_COLOR)
@@ -80,15 +102,21 @@ def _cone_polygon(min_ratio: float, max_ratio: float, x_max: float, y_max: float
     return pts
 
 
-def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11) -> Path:
+def plot_angle_ratio_advantage(output_dir: str | None = None) -> Path:
     base = Path(output_dir) if output_dir else Path("Marius/visualization")
     base.mkdir(parents=True, exist_ok=True)
+
+    # the figure's geometry is worked out by hand below, so only the width is taken from the
+    # style; the in-axes annotations are sized relative to its base font size
+    apply_style(width_cm=FIG_WIDTH_CM, grid=True, strict=True)
+    fig_width, _ = get_figsize(width_cm=FIG_WIDTH_CM)
+    fontsize = mpl.rcParams["font.size"]
 
     lhs_df, _ = create_sample("lhs", N_LHS)
 
     min_ratio = GAS_MIN / ELEC_MAX  # LR corner
     max_ratio = GAS_MAX / ELEC_MIN  # UL corner
-    mid_ratio = ((GAS_MIN + GAS_MAX) / 2) / ((ELEC_MIN + ELEC_MAX) / 2)  # ratio through the rectangle's center
+    mid_ratio = 1.01*((GAS_MIN + GAS_MAX) / 2) / ((ELEC_MIN + ELEC_MAX) / 2)  # ratio through the rectangle's center
 
     # ── Left panel extent, origin pinned at (0, 0) ───────────────────────────────
     # the x-extent is a free design choice (padding around the rectangle); the
@@ -110,11 +138,11 @@ def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11
     # so aspect="equal" is a no-op for both (no shrinking, no extending needed)
     avail_frac = GRID_RIGHT - GRID_LEFT
     col_frac = avail_frac / (2 + WSPACE)
-    cell_w_in = col_frac * FIG_WIDTH
+    cell_w_in = col_frac * fig_width
     cell_h_in = cell_w_in / box_aspect
     fig_height = cell_h_in / (GRID_TOP - GRID_BOTTOM)
 
-    fig = plt.figure(figsize=(FIG_WIDTH, fig_height))
+    fig = plt.figure(figsize=(fig_width, fig_height))
     gs = fig.add_gridspec(1, 2, left=GRID_LEFT, right=GRID_RIGHT, top=GRID_TOP, bottom=GRID_BOTTOM, wspace=WSPACE)
     ax_left = fig.add_subplot(gs[0, 0])
     ax_right = fig.add_subplot(gs[0, 1])
@@ -138,19 +166,16 @@ def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11
     ax_left.text(
         x_elec_mid + 0.16 * (ELEC_MAX - ELEC_MIN), mid_ratio * (x_elec_mid + 0.16 * (ELEC_MAX - ELEC_MIN)),
         "same ratio", color=_SLOPE_COLOR, fontsize=fontsize - 1.5, fontweight="bold",
-        rotation=rotation_deg, rotation_mode="anchor", ha="left", va="bottom", zorder=3.5,
+        rotation=rotation_deg, rotation_mode="anchor", ha="left", va="top", zorder=3.5,
     )
 
     ax_left.set_xlim(*xlim_left)
     ax_left.set_ylim(*ylim_left)
     ax_left.set_aspect("equal", adjustable="box")
     _highlight_boundary_ticks(ax_left, xlim_left, ylim_left)
-    ax_left.set_xlabel(r"Electricity price $c_{\mathrm{el}}$ [€/MWh]", fontsize=fontsize)
-    ax_left.set_ylabel(r"Gas price $c_G$ [€/MWh]", fontsize=fontsize)
-    ax_left.set_title("2D LHS sampling", fontsize=fontsize + 1, fontweight="bold")
-    ax_left.tick_params(labelsize=fontsize - 1)
-    ax_left.grid(True, linewidth=0.4, alpha=0.5)
-    ax_left.legend(loc="upper left", fontsize=fontsize - 1.5, framealpha=0.9)
+    ax_left.set_xlabel(r"Electricity price $c_{\mathrm{el}}$ [€/MWh]")
+    ax_left.set_ylabel(r"Gas price $c_{\mathrm{gas}}$ [€/MWh]")
+    ax_left.legend(loc="upper left")
 
     # ── Right: rectangle + LR/UL rays + shaded convex cone, zoomed way out ──────
     cone_pts = _cone_polygon(min_ratio, max_ratio, x_max, y_max)
@@ -168,7 +193,7 @@ def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11
         end = (x_max, ratio * x_max) if ratio * x_max <= y_max else (y_max / ratio, y_max)
         ax_right.plot(
             [0, end[0]], [0, end[1]], color=_CONE_EDGE, linewidth=0.6, alpha=0.35, zorder=3,
-            label="Ratio training samples" if i == 0 else None,
+            label=f"{N_LHS} ratio training samples" if i == 0 else None,
         )
 
     lr_corner = (ELEC_MAX, GAS_MIN)
@@ -181,8 +206,32 @@ def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11
 
     ax_right.scatter(*lr_corner, color=_CONE_EDGE, s=45, zorder=5, edgecolors="black", linewidths=0.6)
     ax_right.scatter(*ul_corner, color=_CONE_EDGE, s=45, zorder=5, edgecolors="black", linewidths=0.6)
-    ax_right.annotate("LR", lr_corner, textcoords="offset points", xytext=(6, -12), fontsize=fontsize - 1, fontweight="bold", color=_CONE_EDGE)
+    ax_right.annotate("LR", lr_corner, textcoords="offset points", xytext=(6, 8), fontsize=fontsize - 1, fontweight="bold", color=_CONE_EDGE)
     ax_right.annotate("UL", ul_corner, textcoords="offset points", xytext=(-18, 6), fontsize=fontsize - 1, fontweight="bold", color=_CONE_EDGE)
+
+    # theta_min: the LR ray's angle to the x-axis, drawn as an arc in the empty
+    # wedge below the ray so it reads as an angle marker without cluttering the cone
+    theta_min_deg = np.degrees(np.arctan(min_ratio))
+    arc_r = 0.85 * x_max
+    ax_right.add_patch(Arc(
+        (0, 0), 2 * arc_r, 2 * arc_r, angle=0, theta1=0, theta2=theta_min_deg,
+        color=_THETA_COLOR, linewidth=1.2, capstyle="butt", zorder=4,
+    ))
+    # label sits below the x-axis, out of the cone/ray clutter entirely, with a thin
+    # leader line back up to the arc -- same device plot_pareto_accuracy_vs_time.py
+    # uses for its LP-mean point, whose label would otherwise land on the x-axis
+    theta_mid_rad = np.radians(theta_min_deg / 2)
+    theta_tip = (arc_r * np.cos(theta_mid_rad), arc_r * np.sin(theta_mid_rad))
+    theta_label = ax_right.annotate(
+        r"$\theta_{\min}$", theta_tip, textcoords="offset points", xytext=(12, -15),
+        color=_THETA_COLOR, fontsize=fontsize - 1, ha="center", va="top", zorder=4,
+        arrowprops=dict(arrowstyle="-", color=_THETA_COLOR, linewidth=0.8, shrinkA=2, shrinkB=0),
+        annotation_clip=False,
+    )
+    # the "cm" mathtext fontset has no bold glyphs for \mathbf/\boldsymbol, so fake
+    # bold with a same-color stroke outline instead
+    theta_label.set_path_effects([withStroke(linewidth=0.7, foreground=_THETA_COLOR)])
+    theta_label.arrow_patch.set_clip_on(False)
 
     ax_right.scatter([0], [0], color=_BOUND_COLOR, s=35, zorder=5, edgecolors="black", linewidths=0.6)
 
@@ -190,17 +239,9 @@ def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11
     ax_right.set_ylim(*ylim_right)
     ax_right.set_aspect("equal", adjustable="box")
     _highlight_boundary_ticks(ax_right, xlim_right, ylim_right)
-    ax_right.set_xlabel(r"Electricity price $c_{\mathrm{el}}$ [€/MWh]", fontsize=fontsize)
-    ax_right.set_ylabel(r"Gas price $c_G$ [€/MWh]", fontsize=fontsize)
-    ax_right.set_title("Angle-ratio sampling", fontsize=fontsize + 1, fontweight="bold")
-    ax_right.tick_params(labelsize=fontsize - 1)
-    ax_right.grid(True, linewidth=0.4, alpha=0.5)
-    ax_right.legend(loc="upper left", fontsize=fontsize - 1.5, framealpha=0.9)
-
-    fig.suptitle(
-        "Price-space region covered by 2D LHS sampling versus angle-ratio sampling",
-        fontsize=fontsize + 3, fontweight="bold", y=0.98,
-    )
+    ax_right.set_xlabel(r"Electricity price $c_{\mathrm{el}}$ [€/MWh]")
+    ax_right.set_ylabel(r"Gas price $c_{\mathrm{gas}}$ [€/MWh]")
+    ax_right.legend(loc="upper left")
 
     # ── Arrow between the two panels ─────────────────────────────────────────────
     # end_margin is kept as an absolute inch distance (not a fraction of the gap)
@@ -212,8 +253,8 @@ def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11
     y_mid = (pos_left.y0 + pos_left.y1) / 2
     start_margin_in = 0.15
     end_margin_in = 0.75
-    x_start = pos_left.x1 + start_margin_in / FIG_WIDTH
-    x_end = pos_right.x0 - end_margin_in / FIG_WIDTH
+    x_start = pos_left.x1 + start_margin_in / fig_width
+    x_end = pos_right.x0 - end_margin_in / fig_width
 
     arrow = FancyArrowPatch(
         (x_start, y_mid), (x_end, y_mid),
@@ -222,13 +263,14 @@ def plot_angle_ratio_advantage(output_dir: str | None = None, fontsize: int = 11
     )
     fig.add_artist(arrow)
     fig.text(
-        (x_start + x_end) / 2, y_mid + 0.025,
-        r"$r = c_G / c_{\mathrm{el}}$", ha="center", va="bottom",
+        (x_start + x_end) / 2, y_mid + 0.05,
+        r"$r = c_{\mathrm{gas}} / c_{\mathrm{el}}$", ha="center", va="bottom",
         fontsize=fontsize, style="italic",
     )
 
     out_path = base / "angle_ratio_advantage.png"
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path)  # dpi/bbox come from apply_style's rcParams
+    fig.savefig(out_path.with_suffix(".pdf"))
     plt.close(fig)
     return out_path
 

@@ -1,0 +1,9 @@
+{
+  "formulation": "milp",
+  "ratio": 0.45,
+  "c_g": 0.45,
+  "c_el": 1.0,
+  "opex": 100103.7142637229,
+  "mip_gap": 0.0005,
+  "strict_demand_satisfaction": true
+}

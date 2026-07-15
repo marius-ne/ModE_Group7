@@ -24,6 +24,9 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error
 
+sys.path.append("Erdem")
+from src.visualization.style import apply_style
+
 # ---------------------------------------------------------------------------
 # Paths / constants
 # ---------------------------------------------------------------------------
@@ -124,9 +127,9 @@ for col, path in zip(OPEX_COLUMNS, MODEL_PATHS):
 # Plot — 2×2 grid, one subplot per formulation
 # ---------------------------------------------------------------------------
 OPEX_YLABEL = r"OPEX $\left[\dfrac{€_{\mathrm{OPEX}}}{€\,/\,\mathrm{kWh}}\right]$"
-LEGEND_KW   = dict(framealpha=0.85, edgecolor="gray", fontsize=8)
 
-fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+apply_style(width_cm=22, aspect=2.6, nrows=2, grid=True, strict=True)
+fig, axes = plt.subplots(2, 2, constrained_layout=True)
 
 for ax, col, title, color, model in zip(
     axes.flatten(), OPEX_COLUMNS, TITLES, COLORS, models
@@ -182,27 +185,24 @@ for ax, col, title, color, model in zip(
     ax.text(
         0.04, 0.97,
         f"$\\hat{{y}} = {float(coef):.0f}\\,r\\,{sign}\\,{abs(float(intercept)):.0f}$"        f"\n$R^2$ = {r2:.4f}\nRMSE = {np.sqrt(mse):,.0f}",
-        transform=ax.transAxes, fontsize=8.5, verticalalignment="top",
+        transform=ax.transAxes, fontsize=7, verticalalignment="top",
         bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="gray", alpha=0.8),
     )
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$", fontsize=10)
-    ax.set_ylabel(OPEX_YLABEL, fontsize=10)
-    ax.set_title(title, fontsize=12, fontweight="bold")
-    ax.legend(**LEGEND_KW)
-    ax.grid(True, which="both", ls="--", alpha=0.4)
+    ax.set_xlabel(r"Price ratio $c_G\,/\,c_{\mathrm{el}}$ $[-]$")
+    ax.set_ylabel(OPEX_YLABEL)
+    ax.set_title(title)
+    ax.legend(fontsize=7)
 
 plt.suptitle(
     "Surrogate Models vs True Optimisation — 4 Formulations\n"
-    "(dashed lines = training data boundaries)",
-    fontsize=13,
+    "(dashed lines = training data boundaries)"
 )
-plt.tight_layout()
 
 out_path = "Marius/visualization/surrogate_comparison.png"
-fig.savefig(out_path, dpi=200, bbox_inches="tight")
+fig.savefig(out_path)  # dpi/bbox come from apply_style's rcParams
 print(f"Figure saved to {out_path}")
 plt.show()
 plt.close()

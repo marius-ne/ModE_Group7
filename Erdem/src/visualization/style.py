@@ -1,5 +1,6 @@
 from pathlib import Path
 import matplotlib as mpl
+import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 from src.misc.constants import RESULTS_DIR
 
@@ -61,6 +62,7 @@ def apply_style(
     science: bool = True,
     grid: bool = False,
     latex: bool = False,
+    strict: bool = False,
 ) -> None:
     """
     Applies a consistent style to Matplotlib plots.
@@ -71,6 +73,8 @@ def apply_style(
     :param science: If True, imports "scienceplots" package and activates science style to the plots.
     :param grid: If True, enables "scienceplots" grid style on the plots.
     :param latex: If True, enables LaTeX rendering for text in plots (requires LaTeX installation).
+    :param strict: If True, raises when the requested fonts are missing instead of letting Matplotlib
+        fall back to its default face.  Off by default, so a machine without the fonts still plots.
     """
     # Reset to default settings before applying new style
     reset_plot_style()
@@ -166,6 +170,31 @@ def apply_style(
             """,
 
         })
+
+    # With text.usetex the fonts come from the LaTeX installation, so Matplotlib's own font lookup
+    # is irrelevant and there is nothing to check.
+    elif strict:
+        _require_fonts()
+
+
+def _require_fonts() -> None:
+    """
+    Raises if the font family requested in the rcParams is not installed, instead of letting
+    Matplotlib fall back to its default face.
+    """
+    family = mpl.rcParams["font.family"][0]  # e.g. "serif"
+    try:
+        fm.findfont(fm.FontProperties(family=family), fallback_to_default=False)
+    except ValueError as exc:
+        wanted = ", ".join(mpl.rcParams[f"font.{family}"])
+        raise RuntimeError(
+            f"Plot style requests the {family} font(s) [{wanted}], none of which are installed, "
+            f"so Matplotlib would silently fall back to {mpl.rcParamsDefault['font.family'][0]}. "
+            f"Install the font (Latin Modern ships with MiKTeX/TeX Live: register the "
+            f"lmroman10-*.otf files as system fonts, then clear the Matplotlib font cache in "
+            f"`matplotlib.get_cachedir()`), or call apply_style(latex=True) to render text with "
+            f"LaTeX instead."
+        ) from exc
 
 
 def safe_figure(

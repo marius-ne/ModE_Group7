@@ -17,6 +17,7 @@ dependencies = [
     "tsam (>=3.3.0,<4.0.0)",
     "matplotlib (>=3.10.8,<4.0.0)",
     "ipykernel (>=7.2.0,<8.0.0)",
+    "scienceplots (>=2.2.2,<3.0.0)",
 ]
 
 
